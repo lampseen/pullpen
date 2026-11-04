@@ -22,9 +22,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: what cargo update would change
+        env:
+          # The toolchain action turns colour on, and escape codes in front of
+          # each verb would stop the match below.
+          CARGO_TERM_COLOR: never
         run: |
           set -euo pipefail
           cargo update --dry-run 2>&1 | tee update.log
+          # Cargo prints this line even when nothing moves. Without it the
+          # output is not what the match expects, and no matches would read as
+          # every dependency being current.
+          grep -qE '^[[:space:]]*Locking ' update.log
           awk '$1 ~ /^(Updating|Adding|Removing|Downgrading)$/ && !/crates\.io index/' update.log > updates.txt
       - name: what the advisory database says about Cargo.lock
         run: |
