@@ -1,9 +1,9 @@
 name: outdated
 
-# Cargo.lock pins every dependency, and nothing notices when one moves. This
-# opens or updates one tracking issue. Never a pull request, and never an
-# automatic bump: a dependency changes by a commit someone made on purpose,
-# within the ceiling ADR-005 sets.
+# Cargo.lock pins every dependency, and nothing notices when one moves or when
+# an advisory names one. This keeps one tracking issue for each. Never a pull
+# request, and never an automatic bump: a dependency changes by a commit someone
+# made on purpose, within the ceiling ADR-005 sets.
 on:
   schedule:
     # Mondays, early. Weekly is often enough to catch a release and rare
@@ -22,24 +22,58 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: what cargo update would change
+        env:
+          # The toolchain action turns colour on, and escape codes in front of
+          # each verb would stop the match below.
+          CARGO_TERM_COLOR: never
         run: |
-          set -o pipefail
-          cargo update --workspace --dry-run 2>&1 | grep -E '^\s*(Updating|Adding|Removing|Downgrading) ' | grep -v 'crates.io index' > updates.txt || true
-          cat updates.txt
-      - name: open, update or close the tracking issue
+          set -euo pipefail
+          cargo update --dry-run 2>&1 | tee update.log
+          # Cargo prints this line even when nothing moves. Without it the
+          # output is not what the match expects, and no matches would read as
+          # every dependency being current.
+          grep -qE '^[[:space:]]*Locking ' update.log
+          awk '$1 ~ /^(Updating|Adding|Removing|Downgrading)$/ && !/crates\.io index/' update.log > updates.txt
+      - name: what the advisory database says about Cargo.lock
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --locked
+          # cargo audit exits 1 for a finding and for a failure alike. Only a
+          # failure leaves no report, and jq -e stops the run on that, so a
+          # broken audit cannot read as a clean lockfile.
+          cargo audit --json > audit.json || true
+          jq -e '.vulnerabilities.list' audit.json > /dev/null
+          jq -r '.vulnerabilities.list[] | "\(.advisory.id) \(.package.name) \(.package.version): \(.advisory.title)\n  fixed in: \(.versions.patched | join(", ") | if . == "" then "no release" else . end)\n  https://rustsec.org/advisories/\(.advisory.id).html"' audit.json > advisories.txt
+          cat advisories.txt
+      - name: open, update or close the tracking issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh label create dependency-updates --description "A locked dependency has a newer compatible release" --color ededed 2>/dev/null || true
-          issue=$(gh issue list --label dependency-updates --state open --json number --jq '.[0].number // empty')
-          if [ ! -s updates.txt ]; then
-            if [ -n "$issue" ]; then gh issue close "$issue" --comment "Every dependency is current again."; fi
-            exit 0
+          # Arguments: label, label description, issue title, closing comment,
+          # body. An empty body means there is nothing to track.
+          track() {
+            local issue
+            gh label create "$1" --description "$2" --color ededed --force
+            issue=$(gh issue list --label "$1" --state open --json number --jq '.[0].number // empty')
+            if [ -z "$5" ]; then
+              if [ -n "$issue" ]; then gh issue close "$issue" --comment "$4"; fi
+            elif [ -n "$issue" ]; then
+              gh issue edit "$issue" --body "$5"
+            else
+              gh issue create --title "$3" --label "$1" --body "$5"
+            fi
+          }
+          today=$(date -u +%F)
+          updates=""
+          if [ -s updates.txt ]; then
+            updates=$(printf 'What `cargo update` would change, as of %s:\n\n```\n%s\n```\n\nUpdate deliberately: run `cargo update`, then `make check`, and open a PR.\n' "$today" "$(cat updates.txt)")
           fi
-          body=$(printf 'What `cargo update --workspace` would change, as of %s:\n\n```\n%s\n```\n\nUpdate deliberately: run `cargo update`, then `make check`, and open a PR.\n' "$(date -u +%F)" "$(cat updates.txt)")
-          if [ -n "$issue" ]; then
-            gh issue edit "$issue" --body "$body"
-          else
-            gh issue create --title "Dependency updates available" --label dependency-updates --body "$body"
+          advisories=""
+          if [ -s advisories.txt ]; then
+            advisories=$(printf 'What `cargo audit` reports against `Cargo.lock`, as of %s:\n\n```\n%s\n```\n\nUpdate deliberately: move each crate to a fixed version, run `make check`, and open a PR.\n' "$today" "$(cat advisories.txt)")
           fi
+          track dependency-updates "A locked dependency has a newer compatible release" \
+            "Dependency updates available" "Every dependency is current again." "$updates"
+          track security-advisory "An advisory names a locked dependency" \
+            "Security advisories in Cargo.lock" "No advisory names a locked dependency now." "$advisories"
