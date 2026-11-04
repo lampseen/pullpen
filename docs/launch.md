@@ -59,9 +59,9 @@ indexes every page, every wiki URL in the README names a page that exists.
 
 - `wiki.yml`: mirrors `wiki/` into the wiki repository on merge to `main`,
   refusing to push an empty set (copied from bothy, with its comments)
-- `outdated.yml`: weekly, `cargo update --workspace --dry-run`; opens or
-  updates one tracking issue labelled `dependency-updates`, never a PR,
-  never an automatic bump
+- `outdated.yml`: weekly, `cargo update --dry-run` and `cargo audit`; keeps
+  one tracking issue for each, labelled `dependency-updates` and
+  `security-advisory`, never a PR, never an automatic bump
 - `.github/rulesets/main.json`: no deletion, no force-push, linear history,
   pull request required (squash or rebase), required checks `check`,
   `macos`, `golden`, `one-palette`, `token`, and CodeQL at high or above
