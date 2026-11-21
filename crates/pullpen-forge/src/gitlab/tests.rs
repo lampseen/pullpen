@@ -498,3 +498,62 @@ async fn rerun_and_cancel_ask_each_job_by_its_id() {
     g.rerun(&id(), &[job("55"), job("56")]).await.unwrap();
     g.cancel(&id(), &[job("55")]).await.unwrap();
 }
+
+#[tokio::test]
+async fn review_workflow_writes_use_gitlabs_mutations_by_username() {
+    let server = MockServer::start().await;
+    let at = "/api/v4/projects/platform%2Frunner/merge_requests/812";
+    let ok = || ResponseTemplate::new(200).set_body_json(json!({}));
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "state_event": "reopen" })))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{at}/notes")))
+        .and(body_partial_json(json!({ "body": "rename it" })))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let on = json!({ "projectPath": "platform/runner", "iid": "812" });
+    let mutations = [
+        ("mergeRequestSetDraft", "MergeRequestSetDraftInput", json!({ "draft": false })),
+        ("mergeRequestRequestChanges", "MergeRequestRequestChangesInput", json!({})),
+        (
+            "mergeRequestSetReviewers",
+            "MergeRequestSetReviewersInput",
+            json!({ "reviewerUsernames": ["mara"], "operationMode": "APPEND" }),
+        ),
+    ];
+    for (name, ty, input) in mutations {
+        Mock::given(method("POST"))
+            .and(body_string_contains(format!("$i:{ty}!")))
+            .and(body_partial_json(json!({ "variables": { "i": on } })))
+            .and(body_partial_json(json!({ "variables": { "i": input } })))
+            .respond_with(ok().set_body_json(json!({ "data": { name: { "errors": [] } } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gl(&server, &[]);
+    g.reopen(&id()).await.unwrap();
+    g.ready(&id(), true).await.unwrap();
+    g.request_changes(&id(), "rename it").await.unwrap();
+    g.request_review(&id(), &["mara".to_string()]).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_mutations_own_errors_are_a_refusal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "mergeRequestSetReviewers": { "errors": ["Cannot assign reviewers: no user named nobody"] } }
+        })))
+        .mount(&server)
+        .await;
+    let e = gl(&server, &[]).request_review(&id(), &["nobody".to_string()]).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Cannot assign reviewers: no user named nobody".into()));
+}

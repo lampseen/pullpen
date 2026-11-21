@@ -490,3 +490,34 @@ fn a_command_on_several_prs_asks_once() {
     let fx = press(&mut a, &[Key::Char('y')]);
     assert_eq!(sent(&fx), Some(pullpen_core::Action::Rerun));
 }
+
+#[test]
+fn review_workflow_commands_carry_what_was_typed() {
+    use pullpen_core::Action;
+    let mut a = app();
+    a.section_mut().sel = 1;
+    assert_eq!(sent(&command(&mut a, "draft")), Some(Action::Ready(false)));
+    assert_eq!(sent(&command(&mut a, "reopen #812")), Some(Action::Reopen));
+    assert_eq!(
+        sent(&command(&mut a, "request-changes rename the flag")),
+        Some(Action::RequestChanges("rename the flag".into()))
+    );
+    assert_eq!(
+        sent(&command(&mut a, "review #812 @mara jkoh")),
+        Some(Action::Review(vec!["mara".into(), "jkoh".into()]))
+    );
+    assert_eq!(sent(&command(&mut a, "review")), None);
+    assert_eq!(said(&a), "E  review: say who should review, as @login");
+}
+
+#[test]
+fn marking_ready_shows_on_the_row_once_the_forge_agrees() {
+    let mut a = app();
+    a.section_mut().sel = 1;
+    a.section_mut().prs[1].draft = true;
+    let fx = command(&mut a, "ready");
+    assert!(a.section().prs[1].draft, "not before the forge answers");
+    done(&mut a, fx);
+    assert!(!a.section().prs[1].draft);
+    assert_eq!(said(&a), "✓ #812 is ready for review");
+}

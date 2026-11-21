@@ -25,6 +25,13 @@ pub enum Action {
     Checkout {
         branch: String,
     },
+    /// Mark ready for review, or back to draft.
+    Ready(bool),
+    Reopen,
+    /// A review that asks for changes, with what they are.
+    RequestChanges(String),
+    /// Ask these logins for a review, beside whoever was already asked.
+    Review(Vec<String>),
     /// Run the failed jobs of the PR's newest pipeline again.
     Rerun,
     /// Stop the jobs of the PR's newest pipeline that have yet to finish.
@@ -46,6 +53,11 @@ impl Action {
             Action::Close => "close",
             Action::Update => "update",
             Action::Checkout { .. } => "checkout",
+            Action::Ready(true) => "ready",
+            Action::Ready(false) => "draft",
+            Action::Reopen => "reopen",
+            Action::RequestChanges(_) => "request-changes",
+            Action::Review(_) => "review",
             Action::Rerun => "rerun",
             Action::Cancel => "cancel",
             Action::Open => "open",

@@ -74,6 +74,19 @@ impl GitLab {
         graphql(&self.host, req, query, vars).await
     }
 
+    /// One of GitLab's merge request mutations, which take usernames where
+    /// REST wants numeric ids. They report a refusal in their own `errors`,
+    /// beside a null result, not as a GraphQL error.
+    async fn mutate(&self, name: &str, id: &PrId, mut input: Value) -> Result<()> {
+        input["projectPath"] = json!(id.repo);
+        input["iid"] = json!(id.number.to_string());
+        let ty = format!("{}{}Input", name[..1].to_uppercase(), &name[1..]);
+        let q = format!("mutation($i:{ty}!){{{name}(input:$i){{errors}}}}");
+        let d = self.gql(&q, json!({ "i": input })).await?;
+        let errors: Vec<&str> = d[name]["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        if errors.is_empty() { Ok(()) } else { Err(Error::Refused(errors.join("; "))) }
+    }
+
     async fn each_job(&self, id: &PrId, jobs: &[JobRun], verb: &str) -> Result<()> {
         for j in jobs {
             let url = format!("{}/api/v4/projects/{}/jobs/{}/{verb}", self.base, encode_path(&id.repo), j.id);
@@ -577,6 +590,28 @@ impl ForgeTrait for GitLab {
 
     async fn disarm(&self, id: &PrId) -> Result<()> {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/cancel_merge_when_pipeline_succeeds")).await.map(|_| ())
+    }
+
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()> {
+        self.mutate("mergeRequestSetDraft", id, json!({ "draft": !ready })).await
+    }
+
+    async fn reopen(&self, id: &PrId) -> Result<()> {
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&json!({ "state_event": "reopen" })))
+            .await
+            .map(|_| ())
+    }
+
+    /// GitLab's request for changes carries no text, so the text is a
+    /// comment posted first: a refusal of the comment asks for nothing.
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()> {
+        self.comment(id, body).await?;
+        self.mutate("mergeRequestRequestChanges", id, json!({})).await
+    }
+
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let input = json!({ "reviewerUsernames": logins, "operationMode": "APPEND" });
+        self.mutate("mergeRequestSetReviewers", id, input).await
     }
 
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {

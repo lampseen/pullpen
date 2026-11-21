@@ -401,6 +401,15 @@ impl App {
             Cmd::Close => self.request_simple(ids, Action::Close, o, typed),
             Cmd::Update => self.request_simple(ids, Action::Update, o, typed),
             Cmd::Rerun => self.request_simple(ids, Action::Rerun, o, typed),
+            Cmd::Ready => self.request_simple(ids, Action::Ready(true), o, typed),
+            Cmd::Draft => self.request_simple(ids, Action::Ready(false), o, typed),
+            Cmd::Reopen => self.request_simple(ids, Action::Reopen, o, typed),
+            Cmd::RequestChanges | Cmd::Review if p.rest.trim().is_empty() => {
+                let need = if cmd == Cmd::Review { "who should review, as @login" } else { "what needs changing" };
+                return self.command_error(&line, &format!("{}: say {need}", p.name), None);
+            }
+            Cmd::RequestChanges => self.request_simple(ids, Action::RequestChanges(p.rest.to_string()), o, typed),
+            Cmd::Review => self.request_simple(ids, Action::Review(command::logins(p.rest)), o, typed),
             Cmd::Cancel => self.request_simple(ids, Action::Cancel, o, typed),
             Cmd::Dismiss => self.dismiss_here(&ids),
             Cmd::Watch => {

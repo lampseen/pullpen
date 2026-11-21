@@ -109,6 +109,11 @@ pub trait Forge: Send + Sync {
     async fn runs(&self, id: &PrId) -> Result<Vec<Run>>;
     /// A job's log so far, or its tail when long.
     async fn log(&self, id: &PrId, job: &str) -> Result<String>;
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()>;
+    async fn reopen(&self, id: &PrId) -> Result<()>;
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()>;
+    /// Adds reviewers; those already asked stay asked.
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()>;
     /// Runs these jobs of the PR's pipeline again.
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
     /// Stops these jobs of the PR's pipeline.
@@ -155,6 +160,10 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         Action::Comment(body) => f.comment(id, body).await,
         Action::Close => f.close(id).await,
         Action::Update => f.update(id).await,
+        Action::Ready(ready) => f.ready(id, *ready).await,
+        Action::Reopen => f.reopen(id).await,
+        Action::RequestChanges(body) => f.request_changes(id, body).await,
+        Action::Review(logins) => f.request_review(id, logins).await,
         Action::Rerun | Action::Cancel => return pipeline(f, job).await.map(Some),
         Action::Checkout { .. } | Action::Open | Action::Refresh { .. } => Ok(()),
     };

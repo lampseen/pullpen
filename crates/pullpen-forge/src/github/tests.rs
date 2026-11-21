@@ -594,3 +594,43 @@ async fn cancel_stops_the_run_of_a_job_still_going_and_rerun_finds_nothing_faile
     let e = crate::run(&g, &Job { id: 2, target: id(), action: Action::Rerun }).await.unwrap_err();
     assert_eq!(e, Error::Refused("no failed jobs to run again".into()));
 }
+
+#[tokio::test]
+async fn review_workflow_writes_hit_their_endpoints() {
+    let server = MockServer::start().await;
+    let ok = || ResponseTemplate::new(200).set_body_json(json!({}));
+    let rest = [
+        ("PATCH", "/repos/o/r/pulls/7", json!({ "state": "open" })),
+        ("POST", "/repos/o/r/pulls/7/reviews", json!({ "event": "REQUEST_CHANGES", "body": "rename it" })),
+        ("POST", "/repos/o/r/pulls/7/requested_reviewers", json!({ "reviewers": ["mara", "jkoh"] })),
+    ];
+    for (verb, at, body) in rest {
+        Mock::given(method(verb))
+            .and(path(at))
+            .and(body_partial_json(body))
+            .respond_with(ok())
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(body_string_contains("pullRequest(number"))
+        .respond_with(ok().set_body_json(json!({ "data": { "repository": { "pullRequest": { "id": "PR_n7" } } } })))
+        .mount(&server)
+        .await;
+    for name in ["markPullRequestReadyForReview", "convertPullRequestToDraft"] {
+        Mock::given(method("POST"))
+            .and(body_string_contains(name))
+            .and(body_partial_json(json!({ "variables": { "id": "PR_n7" } })))
+            .respond_with(ok().set_body_json(json!({ "data": { name: { "clientMutationId": null } } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    g.reopen(&id()).await.unwrap();
+    g.request_changes(&id(), "rename it").await.unwrap();
+    g.request_review(&id(), &["mara".to_string(), "jkoh".to_string()]).await.unwrap();
+    g.ready(&id(), true).await.unwrap();
+    g.ready(&id(), false).await.unwrap();
+}

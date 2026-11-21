@@ -113,6 +113,12 @@ impl GitHub {
         rules
     }
 
+    /// A write to the PR itself, or to something under it.
+    async fn pull(&self, method: reqwest::Method, id: &PrId, tail: &str, body: Value) -> Result<()> {
+        let path = format!("/repos/{}/pulls/{}{tail}", id.repo, id.number);
+        send(&self.host, self.req(method, &path).json(&body)).await.map(|_| ())
+    }
+
     /// GitHub re-runs and cancels a workflow run, not a job, and refuses a
     /// second request for a run it is already acting on: each run is asked
     /// once. The run's id is only in a job's URL.
@@ -774,6 +780,26 @@ impl ForgeTrait for GitHub {
             c.entry(format!("{}/{repo}", self.host)).or_default().auto_merge_off = false;
         }
         Ok(())
+    }
+
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()> {
+        let node = self.node_id(id).await?;
+        let name = if ready { "markPullRequestReadyForReview" } else { "convertPullRequestToDraft" };
+        let q = format!("mutation($id:ID!){{{name}(input:{{pullRequestId:$id}}){{clientMutationId}}}}");
+        self.gql(&q, json!({ "id": node })).await.map(|_| ())
+    }
+
+    async fn reopen(&self, id: &PrId) -> Result<()> {
+        self.pull(reqwest::Method::PATCH, id, "", json!({ "state": "open" })).await
+    }
+
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()> {
+        let review = json!({ "event": "REQUEST_CHANGES", "body": body });
+        self.pull(reqwest::Method::POST, id, "/reviews", review).await
+    }
+
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        self.pull(reqwest::Method::POST, id, "/requested_reviewers", json!({ "reviewers": logins })).await
     }
 
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {

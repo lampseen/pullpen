@@ -123,6 +123,11 @@ pub fn verb(a: &Action) -> &'static str {
         Action::Close => "Closing",
         Action::Update => "Updating",
         Action::Rerun => "Re-running failed jobs of",
+        Action::Ready(true) => "Marking ready",
+        Action::Ready(false) => "Putting back to draft",
+        Action::Reopen => "Reopening",
+        Action::RequestChanges(_) => "Requesting changes on",
+        Action::Review(_) => "Requesting a review of",
         Action::Cancel => "Cancelling the pipeline of",
         Action::Checkout { .. } => "Checking out",
         Action::Open => "Opening",
@@ -770,6 +775,17 @@ impl App {
                     pullpen_core::Forge::GitLab => format!("rebased onto {}", esc(&p.base)),
                 };
                 markup(&format!("{{g|✓}} {{f|Updated #{n}}}{{d|   {how}}}"))
+            }
+            Action::Ready(ready) => {
+                self.each_pr(id, |p| p.draft = !ready);
+                let now = if *ready { "ready for review" } else { "a draft again" };
+                markup(&format!("{{g|✓}} {{f|#{n} is {now}}}"))
+            }
+            Action::Reopen => markup(&format!("{{g|✓}} {{f|Reopened #{n}}}")),
+            Action::RequestChanges(_) => markup(&format!("{{g|✓}} {{f|Requested changes on #{n}}}")),
+            Action::Review(who) => {
+                let who: Vec<String> = who.iter().map(|w| format!("@{w}")).collect();
+                markup(&format!("{{g|✓}} {{f|Asked for a review of #{n}}}{{d|   {}}}", esc(&who.join(" "))))
             }
             Action::Rerun | Action::Cancel => {
                 let did = if run.job.action == Action::Rerun { "Re-ran" } else { "Cancelled" };

@@ -39,6 +39,10 @@ names; `↑` `↓` walk history, filtered by what you have typed.
 | `:watch [#n]` | the PR's pipeline and its jobs' logs, live |
 | `:rerun [#n]` | run the failed jobs of the PR's newest pipeline again |
 | `:cancel [#n]` | stop the jobs of that pipeline that are still running |
+| `:ready [#n]` `:draft [#n]` | mark ready for review, or put back to draft |
+| `:reopen [#n]` | reopen a closed PR |
+| `:request-changes [#n] <text>` | review asking for changes. On GitLab the text is posted as a comment |
+| `:review [#n] @login…` | ask for a review, beside whoever was already asked |
 | `:q` `:qa` | back, or quit |
 
 Without a number, a command acts on the selected row, or on every marked row.

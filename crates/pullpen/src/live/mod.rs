@@ -220,6 +220,8 @@ fn settle(a: &Action) -> &'static [Duration] {
         | Action::AllowAuto { .. }
         | Action::Close
         | Action::Update
+        | Action::Ready(_)
+        | Action::Reopen
         | Action::Rerun
         | Action::Cancel => &SETTLE,
         _ => &[],
