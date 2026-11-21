@@ -493,6 +493,8 @@ impl GitHub {
             // GitHub reports BEHIND only when protection requires the branch
             // to be current, so seeing it is as good as reading the rule.
             e.requires_up_to_date |= rules.strict || behind;
+            e.auto_merge_off = r["autoMergeAllowed"] == false;
+            e.can_admin = r["viewerCanAdminister"] == true;
         }
         let login = s(n, "/author/login");
         let am = &n["autoMergeRequest"];
@@ -740,6 +742,16 @@ impl ForgeTrait for GitHub {
         let node = self.node_id(id).await?;
         let q = "mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}";
         self.gql(q, json!({ "id": node })).await.map(|_| ())
+    }
+
+    async fn allow_auto(&self, repo: &str) -> Result<()> {
+        let req =
+            self.req(reqwest::Method::PATCH, &format!("/repos/{repo}")).json(&json!({ "allow_auto_merge": true }));
+        send(&self.host, req).await?;
+        if let Ok(mut c) = self.caps.lock() {
+            c.entry(format!("{}/{repo}", self.host)).or_default().auto_merge_off = false;
+        }
+        Ok(())
     }
 
     async fn approve(&self, id: &PrId) -> Result<()> {

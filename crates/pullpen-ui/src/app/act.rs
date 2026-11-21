@@ -45,6 +45,10 @@ pub enum PromptKind {
     },
     /// `M` on a PR that is only waiting: offer auto-merge instead.
     ArmInstead,
+    /// `A` in a repo whose auto-merge setting is off, asked of its admin.
+    AllowAuto {
+        method: MergeMethod,
+    },
     Close,
     Approve,
     Comment(String),
@@ -103,7 +107,7 @@ fn method_of(c: char) -> Option<MergeMethod> {
 pub fn verb(a: &Action) -> &'static str {
     match a {
         Action::Merge { .. } => "Merging",
-        Action::Arm { .. } => "Arming auto-merge on",
+        Action::Arm { .. } | Action::AllowAuto { .. } => "Arming auto-merge on",
         Action::Disarm => "Disarming auto-merge on",
         Action::Approve => "Approving",
         Action::Comment(_) => "Commenting on",
@@ -342,6 +346,22 @@ impl App {
                 let m = method.unwrap_or_else(|| self.default_method(&first));
                 self.start(vec![(first.id.clone(), Action::Merge { method: m }, true)], None, origin, typed)
             }
+            // The forge refuses every arm in such a repo, so nothing is sent
+            // that cannot work; an admin is offered the setting instead.
+            _ if self.caps_of(&first).auto_merge_off => {
+                if self.caps_of(&first).can_admin {
+                    let method = method.unwrap_or_else(|| self.default_method(&first));
+                    self.ask(PromptKind::AllowAuto { method }, ids, origin, typed);
+                } else {
+                    let line = markup(&format!(
+                        "{{r|E  #{} can't arm: {} has auto-merge off}}{{d|      a repo admin allows it in the repo's settings}}",
+                        first.id.number,
+                        esc(&first.id.repo)
+                    ));
+                    self.say(line, mode);
+                }
+                vec![]
+            }
             _ => match (method, self.ui.default_method) {
                 (Some(m), _) | (None, DefaultMethod::Fixed(m)) => {
                     self.start(vec![(first.id.clone(), Action::Arm { method: m }, false)], None, origin, typed)
@@ -417,6 +437,9 @@ impl App {
                 let m = pick(c, allowed).unwrap_or(MergeMethod::Squash);
                 self.start(vec![(ids[0].clone(), Action::Arm { method: m }, false)], None, origin, typed)
             }
+            (PromptKind::AllowAuto { method }, Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), Action::AllowAuto { method: *method }, false)], None, origin, typed)
+            }
             (PromptKind::ArmInstead, Key::Char('y' | 'A')) => self.request_arm(ids, None, origin, typed),
             (PromptKind::Close, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Close, origin, typed),
             (PromptKind::Update, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Update, origin, typed),
@@ -446,6 +469,10 @@ impl App {
                 }
                 Action::Arm { method } if r == Readiness::Ready => {
                     jobs.push((p.id.clone(), Action::Merge { method: *method }, true))
+                }
+                // A batch never changes a repo's settings.
+                Action::Arm { .. } if self.caps_of(&p).auto_merge_off => {
+                    skipped.push((p.id.number, "repo has auto-merge off".into()))
                 }
                 Action::Arm { method } if p.auto_merge.as_ref().is_some_and(|a| a.method == *method) => {
                     skipped.push((p.id.number, "already armed".into()))
@@ -510,7 +537,9 @@ impl App {
         let me = self.me.clone();
         let now = self.now;
         let am = match &job.action {
-            Action::Arm { method } => Some(AutoMerge { method: *method, armed_by: me, armed_at: now }),
+            Action::Arm { method } | Action::AllowAuto { method } => {
+                Some(AutoMerge { method: *method, armed_by: me, armed_at: now })
+            }
             Action::Merge { method } if merging_now => Some(AutoMerge { method: *method, armed_by: me, armed_at: now }),
             _ => return,
         };
@@ -615,7 +644,7 @@ impl App {
                 let note = note.map_or(String::new(), |n| format!(" · {}", esc(n)));
                 markup(&format!("{{g|✓}} {{f|Merged #{n} into {}}}{{d|   {}{note}}}", esc(&p.base), method.word()))
             }
-            Action::Arm { method } => {
+            Action::Arm { method } | Action::AllowAuto { method } => {
                 let wait = match verdict(&p, &self.caps_of(&p)) {
                     Verdict::Waiting(w) => format!("waiting on {}", waiting_on(&w)),
                     Verdict::Blocked(Block::Failing { check }) => format!("merges once {check} passes"),
@@ -734,6 +763,11 @@ impl App {
                     esc(&why)
                 )
             }
+            PromptKind::AllowAuto { method } => format!(
+                "{{f|{} has auto-merge off. Turn it on and arm }}{{B|{what}}}{{f| with }}{{yB|{}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                pr.map_or(String::new(), |p| esc(&p.id.repo)),
+                method.word()
+            ),
             PromptKind::Close => {
                 format!("{{f|Close }}{{B|{what}}}{{f| without merging?}}   {{d|y/Enter yes   n/Esc cancel}}")
             }

@@ -11,6 +11,10 @@ pub enum Action {
         method: MergeMethod,
     },
     Disarm,
+    /// Turn the repo's auto-merge setting on, then arm.
+    AllowAuto {
+        method: MergeMethod,
+    },
     Approve,
     Comment(String),
     Close,
@@ -32,7 +36,7 @@ impl Action {
     pub fn command(&self) -> &'static str {
         match self {
             Action::Merge { .. } => "merge",
-            Action::Arm { .. } | Action::Disarm => "automerge",
+            Action::Arm { .. } | Action::Disarm | Action::AllowAuto { .. } => "automerge",
             Action::Approve => "approve",
             Action::Comment(_) => "comment",
             Action::Close => "close",

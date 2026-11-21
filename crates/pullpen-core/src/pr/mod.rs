@@ -194,6 +194,13 @@ pub struct Capabilities {
     pub allowed_methods: Vec<MergeMethod>,
     pub merge_trains: bool,
     pub requires_up_to_date: bool,
+    /// The repo's own switch for auto-merge is off, so an arm is refused
+    /// whatever the PR's state. Only GitHub has such a switch.
+    #[serde(default)]
+    pub auto_merge_off: bool,
+    /// The signed-in user may change the repo's settings.
+    #[serde(default)]
+    pub can_admin: bool,
 }
 
 /// The one-cell answer to "safe to merge?". Variants are in glyph precedence

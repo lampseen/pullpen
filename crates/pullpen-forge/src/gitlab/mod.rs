@@ -567,6 +567,11 @@ impl ForgeTrait for GitLab {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/cancel_merge_when_pipeline_succeeds")).await.map(|_| ())
     }
 
+    /// GitLab has no such switch: every project can arm.
+    async fn allow_auto(&self, _repo: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn approve(&self, id: &PrId) -> Result<()> {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/approve")).await.map(|_| ())
     }

@@ -545,3 +545,35 @@ merge under ten minutes old with no pipeline yet reads "pipeline not
 started", not "no pipeline". The design changed first (ADR-002):
 `mergedFacts`, and the pipeline screen's header.
 
+
+## ADR-026 — `A` knows a repo with auto-merge off, and its admin may turn it on
+
+GitHub has a per-repository switch for auto-merge, off by default. In a repo
+with it off every arm is refused, whatever the PR's state. pullpen never
+asked about the switch, so `A` sent an arm that could not work and showed
+the forge's refusal.
+
+The search now reads `autoMergeAllowed` and `viewerCanAdminister` from the
+repository, both checked against GitHub's published schema. With the switch
+off, `A` sends no arm. Someone who administers the repo is asked once
+whether to turn it on and arm the PR, and `y` does both: `PATCH /repos/{repo}`
+with `allow_auto_merge`, then the arm. Anyone else is told the setting is
+off and who can change it. A batch skips such PRs by name and never changes
+a setting. GitLab has no such switch.
+
+The counter-argument is that a queue of pull requests has no business
+writing repository settings, and the north star's list of actions has none.
+It survives as one setting, asked for each time, only where the forge would
+otherwise refuse the action the user just asked for.
+
+A separate fault made this look worse than a refusal. The state a refused
+arm restores was read after the row had already been shown armed, so the ◆
+stayed and the next `A` sent a disarm for an arm that never took.
+
+The design changed first (ADR-002): `mergeFlow`'s last state. Proved by
+`a_in_a_repo_with_auto_merge_off_offers_its_admin_the_setting`,
+`a_in_a_repo_with_auto_merge_off_tells_anyone_else_and_sends_nothing`,
+`a_batch_arm_skips_a_repo_with_auto_merge_off_by_name`,
+`allowing_auto_merge_patches_the_repo_then_arms`,
+`a_refused_repo_setting_arms_nothing` and
+`a_refused_arm_takes_the_diamond_back_off_so_the_next_a_arms_again`.

@@ -245,3 +245,51 @@ fn a_refused_arm_waiting_its_turn_in_a_batch_is_taken_back_off_too() {
         assert!(a.section().prs[i].auto_merge.is_none(), "row {i} was refused");
     }
 }
+
+fn auto_merge_off(a: &mut App, i: usize, can_admin: bool) {
+    let id = a.section().prs[i].id.clone();
+    let caps = pullpen_core::Capabilities { auto_merge_off: true, can_admin, ..Default::default() };
+    a.caps.insert(format!("{}/{}", id.host, id.repo), caps);
+}
+
+#[test]
+fn a_in_a_repo_with_auto_merge_off_offers_its_admin_the_setting() {
+    let mut a = app();
+    let i = unarmed_waiting(&a);
+    auto_merge_off(&mut a, i, true);
+    a.section_mut().sel = i;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert!(fx.is_empty(), "nothing is sent before the answer");
+    assert!(matches!(&a.input, Input::Confirm(p) if matches!(p.kind, crate::app::act::PromptKind::AllowAuto { .. })));
+    let fx = press(&mut a, &[Key::Char('y')]);
+    let sent = fx.iter().find_map(|e| if let Effect::Run(j) = e { Some(j.action.clone()) } else { None });
+    assert!(matches!(sent, Some(pullpen_core::Action::AllowAuto { .. })), "{sent:?}");
+}
+
+#[test]
+fn a_in_a_repo_with_auto_merge_off_tells_anyone_else_and_sends_nothing() {
+    let mut a = app();
+    let i = unarmed_waiting(&a);
+    auto_merge_off(&mut a, i, false);
+    a.section_mut().sel = i;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert!(fx.is_empty() && matches!(a.input, Input::Normal));
+    let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
+    assert!(line.contains("has auto-merge off"), "{line}");
+    assert!(a.section().prs[i].auto_merge.is_none());
+}
+
+#[test]
+fn a_batch_arm_skips_a_repo_with_auto_merge_off_by_name() {
+    let mut a = app();
+    let i = unarmed_waiting(&a);
+    auto_merge_off(&mut a, i, true);
+    let n = a.section().prs[i].id.number;
+    let other = (0..a.section().prs.len()).find(|&j| j != i).unwrap();
+    a.section_mut().marks = vec![a.section().prs[i].id.clone(), a.section().prs[other].id.clone()];
+    let fx = press(&mut a, &[Key::Char('A'), Key::Char('y')]);
+    let sent = fx.iter().any(|e| matches!(e, Effect::Run(j) if j.target.number == n));
+    assert!(!sent, "a batch never changes a repo's settings");
+    let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
+    assert!(line.contains(&format!("skipped #{n}: repo has auto-merge off")), "{line}");
+}

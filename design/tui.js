@@ -498,6 +498,8 @@ function build(mode){
    lines:strip({prs:[P[0],P[1],P[2],A(377,{armed:1})],sel:3,st:{armed:8},cmd:M('{a|◆} {f|Armed #377}{d|   squash · waiting on CI (4/9) and 1 review from @acme/infra}')})},
   {k:'A · on armed PR',cap:'Disarm',note:'A toggles. Disarming is not destructive, so it does not ask.',
    lines:strip({prs:R4,sel:3,cmd:M('{f|Auto-merge off for #377}{d|   A to re-arm}')})},
+  {k:'A · repo has auto-merge off',cap:'Offer to turn it on',note:'Only for someone who administers the repo. Anyone else is told the setting is off, and nothing is sent.',
+   lines:strip({prs:R4,sel:3,st:{mode:'CONFIRM',modeK:'warn'},cmd:M('{f|acme/infra has auto-merge off. Turn it on and arm }{B|#377}{f| with }{yB|squash}{f|?}   {d|y/Enter yes   n/Esc cancel}')})},
  ];
  const MK=[812,377,143,1203,375], R13=P.slice(0,13);
  out.batch=[

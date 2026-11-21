@@ -91,6 +91,8 @@ pub trait Forge: Send + Sync {
     async fn merge(&self, id: &PrId, m: MergeMethod) -> Result<bool>;
     async fn arm(&self, id: &PrId, m: MergeMethod) -> Result<()>;
     async fn disarm(&self, id: &PrId) -> Result<()>;
+    /// Turns on the repo setting that `arm` needs.
+    async fn allow_auto(&self, repo: &str) -> Result<()>;
     async fn approve(&self, id: &PrId) -> Result<()>;
     async fn comment(&self, id: &PrId, body: &str) -> Result<()>;
     async fn close(&self, id: &PrId) -> Result<()>;
@@ -137,6 +139,10 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         }
         Action::Arm { method } => f.arm(id, *method).await,
         Action::Disarm => f.disarm(id).await,
+        Action::AllowAuto { method } => {
+            f.allow_auto(&id.repo).await?;
+            f.arm(id, *method).await
+        }
         Action::Approve => f.approve(id).await,
         Action::Comment(body) => f.comment(id, body).await,
         Action::Close => f.close(id).await,

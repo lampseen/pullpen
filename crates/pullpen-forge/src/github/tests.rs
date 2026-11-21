@@ -454,3 +454,66 @@ async fn a_refused_merge_reads_the_branchs_rules_again() {
     g.search(&q, "me", 50).await.unwrap();
     assert!(fresh(std::time::Duration::from_secs(599)) && !fresh(RULES_FOR));
 }
+
+#[test]
+fn a_repo_with_auto_merge_off_says_so_and_who_may_turn_it_on() {
+    let g = GitHub::with_api("github.com", "http://x", "t".into(), Agents::default(), "", false);
+    let mut n = node();
+    g.to_pr(&n, &Rules::default());
+    let caps = g.capabilities()["github.com/o/r"].clone();
+    assert!(!caps.auto_merge_off && !caps.can_admin, "an answer without the fields reads as nothing known");
+    n["repository"]["autoMergeAllowed"] = json!(false);
+    n["repository"]["viewerCanAdminister"] = json!(true);
+    g.to_pr(&n, &Rules::default());
+    let caps = g.capabilities()["github.com/o/r"].clone();
+    assert!(caps.auto_merge_off && caps.can_admin);
+}
+
+#[tokio::test]
+async fn allowing_auto_merge_patches_the_repo_then_arms() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/o/r"))
+        .and(body_partial_json(json!({ "allow_auto_merge": true })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("pullRequest(number"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "repository": { "pullRequest": { "id": "PR_n7" } } } })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("enablePullRequestAutoMerge"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "enablePullRequestAutoMerge": { "clientMutationId": null } } })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let job = Job { id: 1, target: id(), action: Action::AllowAuto { method: MergeMethod::Squash } };
+    crate::run(&g, &job).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_refused_repo_setting_arms_nothing() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/o/r"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(json!({ "message": "Must have admin rights to Repository." })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+    let g = gh(&server);
+    let job = Job { id: 1, target: id(), action: Action::AllowAuto { method: MergeMethod::Squash } };
+    let e = crate::run(&g, &job).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Must have admin rights to Repository.".into()));
+}

@@ -7,7 +7,7 @@ query($q: String!, $after: String) {
         id number title url isDraft createdAt updatedAt additions deletions changedFiles
         headRefName baseRefName state mergedAt
         author { login __typename }
-        repository { nameWithOwner squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed viewerDefaultMergeMethod }
+        repository { nameWithOwner squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed viewerDefaultMergeMethod autoMergeAllowed viewerCanAdminister }
         reviewDecision
         autoMergeRequest { mergeMethod enabledAt enabledBy { login } }
         reviewRequests(first: 10) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug organization { login } } } } }
