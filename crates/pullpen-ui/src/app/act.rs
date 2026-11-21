@@ -433,6 +433,15 @@ impl App {
         origin: Origin,
         typed: Option<String>,
     ) -> Vec<Effect> {
+        // A second update while the first is under way is refused by the
+        // forge, and its refusal would replace the first one's answer.
+        if let ([id], Action::Update) = (&ids[..], &action)
+            && (self.updating.contains_key(id)
+                || self.jobs.iter().any(|j| j.job.target == *id && j.job.action == Action::Update))
+        {
+            self.say(markup(&format!("{{d|#{} is already being updated}}", id.number)), Mode::Normal);
+            return vec![];
+        }
         let kind = match &action {
             Action::Close => Some(PromptKind::Close),
             Action::Update if ids.len() > 1 => Some(PromptKind::Update),
@@ -729,6 +738,7 @@ impl App {
                 // The forge rewrites the branch; until the next sync says how
                 // it stands, its mergeability is not known.
                 self.each_pr(id, |p| p.mergeable = pullpen_core::Mergeable::Unknown);
+                self.updating.insert(id.clone(), self.now);
                 let how = match id.forge {
                     pullpen_core::Forge::GitHub => format!("merged {} into it", esc(&p.base)),
                     pullpen_core::Forge::GitLab => format!("rebased onto {}", esc(&p.base)),

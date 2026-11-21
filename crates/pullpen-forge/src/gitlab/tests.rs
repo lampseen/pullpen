@@ -236,6 +236,10 @@ async fn update_rebases_through_the_rebase_endpoint() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "rebase_in_progress": false })))
+        .mount(&server)
+        .await;
     gl(&server, &[]).update(&id()).await.unwrap();
 }
 
@@ -424,4 +428,46 @@ async fn an_unchecked_merge_request_is_ready_and_a_checking_one_is_not() {
     let ready = |p: &Pr| readiness(p, &Capabilities::default());
     assert_eq!(ready(&mr("UNCHECKED")), Readiness::Ready);
     assert_eq!(ready(&mr("CHECKING")), Readiness::Waiting, "GitLab is mid-check: seconds, not until asked");
+}
+
+async fn rebase_then(server: &MockServer, answers: &[Value]) {
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/platform%2Frunner/merge_requests/812/rebase"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(json!({ "rebase_in_progress": true })))
+        .mount(server)
+        .await;
+    for (i, a) in answers.iter().enumerate() {
+        let last = i + 1 == answers.len();
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/platform%2Frunner/merge_requests/812"))
+            .and(wiremock::matchers::query_param("include_rebase_in_progress", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(a))
+            .up_to_n_times(if last { u64::MAX } else { 1 })
+            .mount(server)
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn an_update_waits_for_the_rebase_to_finish() {
+    let server = MockServer::start().await;
+    rebase_then(
+        &server,
+        &[
+            json!({ "rebase_in_progress": true, "merge_error": null }),
+            json!({ "rebase_in_progress": false, "merge_error": null }),
+        ],
+    )
+    .await;
+    gl(&server, &[]).update(&id()).await.unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 3, "the rebase, then asked twice");
+}
+
+#[tokio::test]
+async fn a_rebase_that_fails_after_it_was_accepted_is_a_refusal() {
+    let server = MockServer::start().await;
+    let failed = json!({ "rebase_in_progress": false, "merge_error": "Rebase failed. Please rebase locally" });
+    rebase_then(&server, &[failed]).await;
+    let e = gl(&server, &[]).update(&id()).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Rebase failed. Please rebase locally".into()));
 }

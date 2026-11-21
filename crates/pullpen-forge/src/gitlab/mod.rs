@@ -20,6 +20,9 @@ const RUNS: &str = include_str!("runs.graphql");
 const LANDED: &str = include_str!("landed.graphql");
 /// A running job's log is asked for every few seconds; its tail is enough.
 const LOG_TAIL: usize = 256 * 1024;
+/// How often, and how many times, a rebase is asked whether it has finished.
+/// One that outlasts this is left to the syncs that follow an update.
+const REBASE_POLL: (std::time::Duration, usize) = (std::time::Duration::from_millis(500), 40);
 
 pub struct GitLab {
     http: reqwest::Client,
@@ -589,8 +592,21 @@ impl ForgeTrait for GitLab {
             .map(|_| ())
     }
 
+    /// GitLab only queues a rebase and answers 202. Whether it worked is on
+    /// the MR afterwards: a conflict shows as `merge_error`, nowhere else.
     async fn update(&self, id: &PrId) -> Result<()> {
-        send(&self.host, self.rest(reqwest::Method::PUT, id, "/rebase")).await.map(|_| ())
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "/rebase")).await?;
+        for _ in 0..REBASE_POLL.1 {
+            let mr = send(&self.host, self.rest(reqwest::Method::GET, id, "?include_rebase_in_progress=true")).await?;
+            if mr["rebase_in_progress"] != true {
+                return match mr["merge_error"].as_str().filter(|e| !e.is_empty()) {
+                    Some(e) => Err(Error::Refused(e.to_string())),
+                    None => Ok(()),
+                };
+            }
+            tokio::time::sleep(REBASE_POLL.0).await;
+        }
+        Ok(())
     }
 
     async fn runs(&self, id: &PrId) -> Result<Vec<Run>> {

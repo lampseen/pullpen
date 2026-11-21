@@ -587,3 +587,36 @@ The design changed first (ADR-002): `mergeFlow`'s last two states. Proved by
 `allowing_auto_merge_patches_the_repo_then_arms`,
 `a_refused_repo_setting_arms_nothing` and
 `a_refused_arm_takes_the_diamond_back_off_so_the_next_a_arms_again`.
+
+## ADR-027 — An update is followed until the forge has finished it
+
+`u` ended in an error line often enough to be reported. Both forges answer
+an update before they have done it: GitHub and GitLab each return 202 and
+rewrite the branch afterwards. pullpen took the 202 as done and synced
+once, at once. That read usually came first, the row went back to "behind",
+and a second `u` got the forge's refusal of an update already under way.
+The cause is read from the code and the forges' documented answers, not
+caught live: the maintainer's log held no failed update to check against.
+
+**An update syncs again, as a merge does.** ADR-025's syncs 5 and 20 seconds
+after acting now follow an update too.
+
+**A branch pullpen updated is not believed behind for 30 seconds.** A read
+that still says behind shows the row as checking. Any other answer is the
+forge having caught up, and ends the wait.
+
+**A second `u` sends nothing** while the first is in flight or the forge is
+still catching up, and says the PR is already being updated.
+
+**GitLab's rebase is asked whether it worked.** A rebase that hits a
+conflict is accepted with 202 and fails later, with the reason only in the
+MR's `merge_error`. pullpen now asks the MR, with
+`include_rebase_in_progress`, until the rebase has stopped, for up to 20
+seconds, and reports `merge_error` as the refusal it is. This is the
+polling GitLab's API documentation describes for the endpoint.
+
+Proved by `merges_arms_and_closes_sync_again_while_the_forge_catches_up`,
+`an_updated_branch_is_not_believed_behind_until_the_forge_catches_up`,
+`a_second_u_while_the_first_is_under_way_sends_nothing`,
+`an_update_waits_for_the_rebase_to_finish` and
+`a_rebase_that_fails_after_it_was_accepted_is_a_refusal`.

@@ -178,6 +178,9 @@ pub enum Effect {
 pub const LOG_MAX: usize = 200;
 /// Seconds a PR pullpen ended stays out of open lists while the forge catches up.
 const ENDED_FOR: i64 = 300;
+/// Seconds a branch pullpen updated is not believed to be behind: the forge
+/// answers before it has rewritten the branch.
+const UPDATING_FOR: i64 = 30;
 
 pub struct App {
     pub sections: Vec<SectionState>,
@@ -199,6 +202,8 @@ pub struct App {
     pub cleared: Vec<PrId>,
     /// PRs pullpen merged or closed itself, and when: see `synced`.
     pub ended: HashMap<PrId, Timestamp>,
+    /// Branches an update was accepted for, and when.
+    pub updating: HashMap<PrId, Timestamp>,
     /// Each merged PR's group as last seen, to ring when it changes.
     pub landings: HashMap<PrId, crate::views::armed::Landed>,
     pub notify: Vec<String>,
@@ -249,6 +254,7 @@ impl App {
             watches: HashMap::new(),
             cleared: Vec::new(),
             ended: HashMap::new(),
+            updating: HashMap::new(),
             landings: HashMap::new(),
             notify: Vec::new(),
             last_visit: None,
@@ -651,6 +657,16 @@ impl App {
         let open = |p: &Pr| p.state == pullpen_core::PrState::Open;
         for p in prs.iter().filter(|p| !open(p)) {
             self.ended.remove(&p.id);
+        }
+        // Likewise a branch pullpen updated can still read as behind. Any
+        // other answer is the forge having caught up.
+        self.updating.retain(|_, at| self.now.0 - at.0 < UPDATING_FOR);
+        for p in &mut prs {
+            if p.mergeable != pullpen_core::Mergeable::Behind {
+                self.updating.remove(&p.id);
+            } else if self.updating.contains_key(&p.id) {
+                p.mergeable = pullpen_core::Mergeable::Unknown;
+            }
         }
         let before = prs.len();
         prs.retain(|p| !open(p) || !self.ended.contains_key(&p.id));

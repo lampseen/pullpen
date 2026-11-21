@@ -377,3 +377,47 @@ fn a_on_a_pr_that_is_only_behind_names_the_key_that_updates_it() {
     );
     assert!(a.section().prs[1].auto_merge.is_none());
 }
+
+fn done(a: &mut App, fx: Vec<Effect>) {
+    for e in fx {
+        if let Effect::Run(job) = e {
+            a.job_done(pullpen_core::JobResult { job, outcome: pullpen_core::Outcome::Done, note: None });
+        }
+    }
+}
+
+#[test]
+fn a_second_u_while_the_first_is_under_way_sends_nothing() {
+    let mut a = app();
+    a.section_mut().sel = 1;
+    let fx = press(&mut a, &[Key::Char('u')]);
+    assert!(press(&mut a, &[Key::Char('u')]).is_empty(), "the forge has not answered the first");
+    assert_eq!(said(&a), "#812 is already being updated");
+    done(&mut a, fx);
+    assert!(press(&mut a, &[Key::Char('u')]).is_empty(), "the forge answered, and is still rewriting the branch");
+}
+
+#[test]
+fn an_updated_branch_is_not_believed_behind_until_the_forge_catches_up() {
+    use pullpen_core::Mergeable::{Behind, Clean, Unknown};
+    let mut a = app();
+    a.section_mut().sel = 1;
+    let i = a.active;
+    let id = a.section().prs[1].id.clone();
+    let fx = press(&mut a, &[Key::Char('u')]);
+    done(&mut a, fx);
+    let read = |a: &App, m| {
+        let mut prs = a.section().prs.clone();
+        prs[1].mergeable = m;
+        (prs, a.section().total)
+    };
+    let (prs, total) = read(&a, Behind);
+    a.synced(i, prs, total);
+    assert_eq!(a.find(&id).unwrap().mergeable, Unknown, "a read that came too early");
+    let (prs, total) = read(&a, Clean);
+    a.synced(i, prs, total);
+    assert_eq!(a.find(&id).unwrap().mergeable, Clean);
+    let (prs, total) = read(&a, Behind);
+    a.synced(i, prs, total);
+    assert_eq!(a.find(&id).unwrap().mergeable, Behind, "behind again after the update landed is news");
+}
