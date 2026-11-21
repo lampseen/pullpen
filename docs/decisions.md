@@ -632,3 +632,44 @@ Proved by `merges_arms_and_closes_sync_again_while_the_forge_catches_up`,
 `a_second_u_while_the_first_is_under_way_sends_nothing`,
 `an_update_waits_for_the_rebase_to_finish` and
 `a_rebase_that_fails_after_it_was_accepted_is_a_refusal`.
+
+## ADR-028 — More of what the forge CLIs do, as commands and not keys
+
+The maintainer asked for more of what `gh` and `glab` can do, without
+losing how direct the list is. pullpen does not run those tools; it borrows
+their tokens and calls the forges itself (ADR-008). So this is new calls on
+the `Forge` trait, in four groups: a pipeline's failed jobs run again or
+its running ones stopped; a PR sent back, on to a reviewer, to draft or
+ready, or reopened; its labels, assignees and title changed; and a PR opened
+for the branch of the clone pullpen was started in.
+
+The counter-argument is the north star's own test: a feature that does not
+help answer "is this safe to merge, and what is it waiting for", or act on
+the answer, does not belong. Running a pipeline again and asking for a
+review pass it plainly. Labels, titles and opening a PR do not answer the
+question. They are what stands between the user and a queue cleared without
+a browser, which is the invariant, and the maintainer chose them. What the
+counter-argument does decide is where they live.
+
+**Commands first.** Every action here is a `:` command. None takes a key in
+the list, and the help overlay does not grow: the list's keys stay the ones
+a week of triage uses. A key is added later, by its own record, for a
+command that turns out to be used daily, as `u` was (ADR-015). A command on
+several marked PRs asks once.
+
+**Creating PRs is no longer ruled out.** The north star and PLAN §10 said
+so; both now say otherwise. Review comments on diff lines and managing
+branches stay out.
+
+## ADR-029 — The code cap rises to 11,500
+
+The fixes in ADR-026 and ADR-027 measured 142 lines and `:rerun` and
+`:cancel` 95, which took the code to 10,889 of ADR-021's 11,000. The three
+groups still to come in ADR-028 are of the same shape as that one, a core
+action, a call on each forge and a command, and there are about ten such
+actions.
+
+The cap rises to 11,500 lines. This record is written before those three
+groups are, so the figure is an estimate from one measured group, not a
+measurement of all four; the pull request that adds them states what they
+came to.
