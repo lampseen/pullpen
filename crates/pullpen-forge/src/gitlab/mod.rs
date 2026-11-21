@@ -614,6 +614,21 @@ impl ForgeTrait for GitLab {
         self.mutate("mergeRequestSetReviewers", id, input).await
     }
 
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>> {
+        let body = json!({ "add_labels": add.join(","), "remove_labels": remove.join(",") });
+        let mr = send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&body)).await?;
+        Ok(mr["labels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect())
+    }
+
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let input = json!({ "assigneeUsernames": logins, "operationMode": "APPEND" });
+        self.mutate("mergeRequestSetAssignees", id, input).await
+    }
+
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()> {
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&json!({ "title": title }))).await.map(|_| ())
+    }
+
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
         self.each_job(id, jobs, "retry").await
     }

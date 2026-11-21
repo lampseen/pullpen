@@ -516,7 +516,7 @@ function build(mode){
   {k:'typing',cap:'Typing',note:'Target resolves live on the right. Without a target the command acts on the selected row.',
    lines:strip({prs:R5,sel:1,st:CM,cmd:lr(M(':comment #812 rebased on main, merging after the 2.4 cut{C| }'),M('{d|→ platform/runner #812}  '),120)})},
   {k:':a then Tab',cap:'Completing a command',note:'Wildmenu opens upward over the list. Tab / S-Tab cycle and fill the line; typing narrows.',
-   lines:strip({prs:R5,sel:1,st:CM,menuW:56,menu:[withBg(fit(M(' {B|approve}       {d|approve the PR}'),56),'sel'),M(' automerge     {d|arm or disarm auto-merge}')],cmd:M(':approve{C| }')})},
+   lines:strip({prs:R5,sel:1,st:CM,menuW:56,menu:[withBg(fit(M(' {B|approve}       {d|approve the PR}'),56),'sel'),M(' automerge     {d|arm or disarm auto-merge}'),M(' assign        {d|assign people, or yourself}')],cmd:M(':approve{C| }')})},
   {k:':merge #48 then Tab',cap:'Completing a target',note:'Targets complete from the current section with state glyph and title, so you pick the right #.',
    lines:strip({prs:R5,sel:1,st:CM,menu:[menuPR(P[0],true,84),menuPR(P[5],false,84),menuPR(P[10],false,84),menuPR(P[16],false,84)],menuW:84,cmd:M(':merge #4821{C| }')})},
   {k:'confirming',cap:'Confirming',note:'Mode block turns yellow. One key answers; anything other than y / Enter / a method key cancels.',

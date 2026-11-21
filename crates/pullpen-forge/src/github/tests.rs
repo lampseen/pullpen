@@ -634,3 +634,47 @@ async fn review_workflow_writes_hit_their_endpoints() {
     g.ready(&id(), true).await.unwrap();
     g.ready(&id(), false).await.unwrap();
 }
+
+#[tokio::test]
+async fn labels_are_removed_then_added_and_the_last_answer_is_what_is_left() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/repos/o/r/issues/7/labels/needs%20review"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "name": "bug" }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/o/r/issues/7/labels"))
+        .and(body_partial_json(json!({ "labels": ["infra"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "name": "bug" }, { "name": "infra" }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let action = Action::Label { add: vec!["infra".into()], remove: vec!["needs review".into()] };
+    let note = crate::run(&g, &Job { id: 1, target: id(), action }).await.unwrap();
+    assert_eq!(note.as_deref(), Some("now bug, infra"));
+}
+
+#[tokio::test]
+async fn assigning_and_retitling_hit_their_endpoints() {
+    let server = MockServer::start().await;
+    let writes = [
+        ("POST", "/repos/o/r/issues/7/assignees", json!({ "assignees": ["mara"] })),
+        ("PATCH", "/repos/o/r/pulls/7", json!({ "title": "Bump deps, again" })),
+    ];
+    for (verb, at, body) in writes {
+        let ok = ResponseTemplate::new(200).set_body_json(json!({}));
+        Mock::given(method(verb))
+            .and(path(at))
+            .and(body_partial_json(body))
+            .respond_with(ok)
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    g.assign(&id(), &["mara".to_string()]).await.unwrap();
+    g.retitle(&id(), "Bump deps, again").await.unwrap();
+}

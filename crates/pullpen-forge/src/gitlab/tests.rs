@@ -557,3 +557,40 @@ async fn a_mutations_own_errors_are_a_refusal() {
     let e = gl(&server, &[]).request_review(&id(), &["nobody".to_string()]).await.unwrap_err();
     assert_eq!(e, Error::Refused("Cannot assign reviewers: no user named nobody".into()));
 }
+
+#[tokio::test]
+async fn labels_titles_and_assignees_are_written_and_the_labels_left_come_back() {
+    let server = MockServer::start().await;
+    let at = "/api/v4/projects/platform%2Frunner/merge_requests/812";
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "add_labels": "infra,ci", "remove_labels": "wip" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "labels": ["ci", "infra"] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "title": "Runner: retry on 502" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("$i:MergeRequestSetAssigneesInput!"))
+        .and(body_partial_json(
+            json!({ "variables": { "i": { "assigneeUsernames": ["mara"], "operationMode": "APPEND" } } }),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "mergeRequestSetAssignees": { "errors": [] } } })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gl(&server, &[]);
+    let now = g.label(&id(), &["infra".to_string(), "ci".to_string()], &["wip".to_string()]).await.unwrap();
+    assert_eq!(now, ["ci", "infra"]);
+    g.retitle(&id(), "Runner: retry on 502").await.unwrap();
+    g.assign(&id(), &["mara".to_string()]).await.unwrap();
+}

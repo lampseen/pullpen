@@ -25,6 +25,9 @@ pub enum Cmd {
     Reopen,
     RequestChanges,
     Review,
+    Label,
+    Assign,
+    Title,
     Messages,
     Clear,
     Quit,
@@ -68,6 +71,9 @@ pub const COMMANDS: &[CmdInfo] = &[
     c("reopen", Cmd::Reopen, "reopen a closed PR"),
     c("request-changes", Cmd::RequestChanges, "review asking for changes"),
     c("review", Cmd::Review, "ask people for a review"),
+    c("label", Cmd::Label, "add +labels, remove -labels"),
+    c("assign", Cmd::Assign, "assign people, or yourself"),
+    c("title", Cmd::Title, "change the title"),
 ];
 
 pub const ALIASES: &[(&str, Cmd)] = &[("am", Cmd::Automerge)];

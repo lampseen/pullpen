@@ -521,3 +521,36 @@ fn marking_ready_shows_on_the_row_once_the_forge_agrees() {
     assert!(!a.section().prs[1].draft);
     assert_eq!(said(&a), "✓ #812 is ready for review");
 }
+
+#[test]
+fn label_assign_and_title_commands_carry_what_was_typed() {
+    use pullpen_core::Action;
+    let mut a = app();
+    a.me = "ash".into();
+    a.section_mut().sel = 1;
+    let fx = command(&mut a, "label +infra ci -wip");
+    assert_eq!(sent(&fx), Some(Action::Label { add: vec!["infra".into(), "ci".into()], remove: vec!["wip".into()] }));
+    for e in fx {
+        if let Effect::Run(job) = e {
+            let note = Some("now ci, infra".to_string());
+            a.job_done(pullpen_core::JobResult { job, outcome: pullpen_core::Outcome::Done, note });
+        }
+    }
+    assert_eq!(said(&a), "✓ Labelled #812   now ci, infra");
+    assert_eq!(sent(&command(&mut a, "assign")), Some(Action::Assign(vec!["ash".into()])), "bare :assign is yourself");
+    assert_eq!(sent(&command(&mut a, "assign #812 @mara")), Some(Action::Assign(vec!["mara".into()])));
+    let fx = command(&mut a, "title Runner: retry on 502");
+    assert_eq!(sent(&fx), Some(Action::Title("Runner: retry on 502".into())));
+    done(&mut a, fx);
+    assert_eq!(a.section().prs[1].title, "Runner: retry on 502");
+    assert_eq!(sent(&command(&mut a, "label")), None);
+    assert_eq!(said(&a), "E  label: say which, as +add or -remove");
+}
+
+#[test]
+fn a_title_is_for_one_pr() {
+    let mut a = app();
+    a.section_mut().marks = a.section().prs[..2].iter().map(|p| p.id.clone()).collect();
+    assert_eq!(sent(&command(&mut a, "title Same for both")), None);
+    assert_eq!(said(&a), "E  title: one PR at a time");
+}

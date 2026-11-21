@@ -123,6 +123,9 @@ pub fn verb(a: &Action) -> &'static str {
         Action::Close => "Closing",
         Action::Update => "Updating",
         Action::Rerun => "Re-running failed jobs of",
+        Action::Label { .. } => "Labelling",
+        Action::Assign(_) => "Assigning",
+        Action::Title(_) => "Retitling",
         Action::Ready(true) => "Marking ready",
         Action::Ready(false) => "Putting back to draft",
         Action::Reopen => "Reopening",
@@ -786,6 +789,17 @@ impl App {
             Action::Review(who) => {
                 let who: Vec<String> = who.iter().map(|w| format!("@{w}")).collect();
                 markup(&format!("{{g|✓}} {{f|Asked for a review of #{n}}}{{d|   {}}}", esc(&who.join(" "))))
+            }
+            Action::Label { .. } => {
+                markup(&format!("{{g|✓}} {{f|Labelled #{n}}}{{d|   {}}}", esc(note.unwrap_or_default())))
+            }
+            Action::Assign(who) => {
+                let who: Vec<String> = who.iter().map(|w| format!("@{w}")).collect();
+                markup(&format!("{{g|✓}} {{f|Assigned #{n}}}{{d|   {}}}", esc(&who.join(" "))))
+            }
+            Action::Title(title) => {
+                self.each_pr(id, |p| p.title = title.clone());
+                markup(&format!("{{g|✓}} {{f|Retitled #{n}}}"))
             }
             Action::Rerun | Action::Cancel => {
                 let did = if run.job.action == Action::Rerun { "Re-ran" } else { "Cancelled" };

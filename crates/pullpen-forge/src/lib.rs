@@ -114,6 +114,11 @@ pub trait Forge: Send + Sync {
     async fn request_changes(&self, id: &PrId, body: &str) -> Result<()>;
     /// Adds reviewers; those already asked stay asked.
     async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()>;
+    /// The PR's labels afterwards.
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>>;
+    /// Adds assignees; those already assigned stay.
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()>;
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()>;
     /// Runs these jobs of the PR's pipeline again.
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
     /// Stops these jobs of the PR's pipeline.
@@ -164,6 +169,12 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         Action::Reopen => f.reopen(id).await,
         Action::RequestChanges(body) => f.request_changes(id, body).await,
         Action::Review(logins) => f.request_review(id, logins).await,
+        Action::Label { add, remove } => {
+            let now = f.label(id, add, remove).await?;
+            return Ok(Some(if now.is_empty() { "no labels now".into() } else { format!("now {}", now.join(", ")) }));
+        }
+        Action::Assign(logins) => f.assign(id, logins).await,
+        Action::Title(title) => f.retitle(id, title).await,
         Action::Rerun | Action::Cancel => return pipeline(f, job).await.map(Some),
         Action::Checkout { .. } | Action::Open | Action::Refresh { .. } => Ok(()),
     };

@@ -32,6 +32,13 @@ pub enum Action {
     RequestChanges(String),
     /// Ask these logins for a review, beside whoever was already asked.
     Review(Vec<String>),
+    Label {
+        add: Vec<String>,
+        remove: Vec<String>,
+    },
+    /// Assign these logins, beside whoever already is.
+    Assign(Vec<String>),
+    Title(String),
     /// Run the failed jobs of the PR's newest pipeline again.
     Rerun,
     /// Stop the jobs of the PR's newest pipeline that have yet to finish.
@@ -58,6 +65,9 @@ impl Action {
             Action::Reopen => "reopen",
             Action::RequestChanges(_) => "request-changes",
             Action::Review(_) => "review",
+            Action::Label { .. } => "label",
+            Action::Assign(_) => "assign",
+            Action::Title(_) => "title",
             Action::Rerun => "rerun",
             Action::Cancel => "cancel",
             Action::Open => "open",

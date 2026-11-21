@@ -43,6 +43,9 @@ names; `↑` `↓` walk history, filtered by what you have typed.
 | `:reopen [#n]` | reopen a closed PR |
 | `:request-changes [#n] <text>` | review asking for changes. On GitLab the text is posted as a comment |
 | `:review [#n] @login…` | ask for a review, beside whoever was already asked |
+| `:label [#n] +name -name…` | add and remove labels; the answer lists the labels the PR has afterwards |
+| `:assign [#n] [@login…]` | assign people, beside whoever already is; bare `:assign` is yourself |
+| `:title [#n] <text>` | change the title |
 | `:q` `:qa` | back, or quit |
 
 Without a number, a command acts on the selected row, or on every marked row.

@@ -10,7 +10,7 @@ use pullpen_core::time::{Timestamp, duration, parse_rfc3339, rfc3339};
 use pullpen_core::*;
 use serde_json::{Value, json};
 
-use crate::http::{self, graphql, send};
+use crate::http::{self, encode_path, graphql, send};
 use crate::{Agents, Error, Forge as ForgeTrait, Page, Result, failed_branches, set_branch};
 
 const SEARCH: &str = include_str!("search.graphql");
@@ -800,6 +800,29 @@ impl ForgeTrait for GitHub {
 
     async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()> {
         self.pull(reqwest::Method::POST, id, "/requested_reviewers", json!({ "reviewers": logins })).await
+    }
+
+    /// A PR's labels are its issue's. Each call answers with the labels
+    /// left, so the last answer is the PR's labels afterwards.
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>> {
+        let at = format!("/repos/{}/issues/{}/labels", id.repo, id.number);
+        let mut now = Value::Null;
+        for l in remove {
+            now = send(&self.host, self.req(reqwest::Method::DELETE, &format!("{at}/{}", encode_path(l)))).await?;
+        }
+        if !add.is_empty() || remove.is_empty() {
+            now = send(&self.host, self.req(reqwest::Method::POST, &at).json(&json!({ "labels": add }))).await?;
+        }
+        Ok(now.as_array().into_iter().flatten().map(|l| s(l, "/name").to_string()).collect())
+    }
+
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let path = format!("/repos/{}/issues/{}/assignees", id.repo, id.number);
+        send(&self.host, self.req(reqwest::Method::POST, &path).json(&json!({ "assignees": logins }))).await.map(|_| ())
+    }
+
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()> {
+        self.pull(reqwest::Method::PATCH, id, "", json!({ "title": title })).await
     }
 
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
