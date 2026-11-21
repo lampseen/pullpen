@@ -516,6 +516,7 @@ impl GitHub {
                 .map_or_else(Checks::default, |r| checks(r, &rules.checks)),
             reviews: Reviews { have, need, approved_by, changes_requested: decision == "CHANGES_REQUESTED", pending },
             mergeable,
+            mergeable_now: matches!(s(n, "/mergeStateStatus"), "CLEAN" | "UNSTABLE" | "HAS_HOOKS"),
             // GitHub keeps the request on a PR after it merges or closes.
             auto_merge: (!am.is_null() && s(n, "/state") == "OPEN").then(|| AutoMerge {
                 method: method(s(am, "/mergeMethod")).unwrap_or(default),

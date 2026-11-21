@@ -293,3 +293,31 @@ fn a_batch_arm_skips_a_repo_with_auto_merge_off_by_name() {
     let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
     assert!(line.contains(&format!("skipped #{n}: repo has auto-merge off")), "{line}");
 }
+
+#[test]
+fn a_on_a_pr_the_forge_would_merge_at_once_asks_to_merge_and_never_arms() {
+    let mut a = app();
+    a.ui.default_method = DefaultMethod::Fixed(pullpen_core::MergeMethod::Squash);
+    let i = unarmed_waiting(&a);
+    a.section_mut().prs[i].mergeable_now = true;
+    a.section_mut().sel = i;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert!(fx.is_empty(), "a row that is not green merges only on a yes");
+    let fx = press(&mut a, &[Key::Char('y')]);
+    let sent = fx.iter().find_map(|e| if let Effect::Run(j) = e { Some(j.action.clone()) } else { None });
+    assert_eq!(sent, Some(pullpen_core::Action::Merge { method: pullpen_core::MergeMethod::Squash }));
+}
+
+#[test]
+fn a_batch_arm_skips_a_pr_the_forge_would_merge_at_once() {
+    let mut a = app();
+    let i = unarmed_waiting(&a);
+    a.section_mut().prs[i].mergeable_now = true;
+    let n = a.section().prs[i].id.number;
+    let other = (0..a.section().prs.len()).find(|&j| j != i).unwrap();
+    a.section_mut().marks = vec![a.section().prs[i].id.clone(), a.section().prs[other].id.clone()];
+    let fx = press(&mut a, &[Key::Char('A'), Key::Char('y')]);
+    assert!(!fx.iter().any(|e| matches!(e, Effect::Run(j) if j.target.number == n)));
+    let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
+    assert!(line.contains(&format!("skipped #{n}: can merge now")), "{line}");
+}

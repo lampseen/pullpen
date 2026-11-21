@@ -16,6 +16,7 @@ fn pr() -> Pr {
         reviews: Reviews { have: 1, need: 1, approved_by: vec![], changes_requested: false, pending: vec![] },
         mergeable: Mergeable::Clean,
         auto_merge: None,
+        mergeable_now: false,
         merge_train: None,
         state: PrState::Open,
         updated_at: Timestamp(0),

@@ -570,7 +570,17 @@ A separate fault made this look worse than a refusal. The state a refused
 arm restores was read after the row had already been shown armed, so the ◆
 stayed and the next `A` sent a disarm for an arm that never took.
 
-The design changed first (ADR-002): `mergeFlow`'s last state. Proved by
+**What the forge would merge at once is not armed.** GitHub also refuses to
+arm a PR it would merge as it stands (ADR-007), and that can be a row
+pullpen shows as waiting: where no ruleset names the required checks, every
+check counts. `mergeStateStatus` of `CLEAN`, `UNSTABLE` or `HAS_HOOKS` now
+marks such a PR. `A` on one asks whether to merge it, because the row is not
+green, and a batch arm skips it by name. Proved by
+`a_on_a_pr_the_forge_would_merge_at_once_asks_to_merge_and_never_arms`,
+`a_batch_arm_skips_a_pr_the_forge_would_merge_at_once` and
+`what_github_would_merge_at_once_is_marked_so_it_is_never_armed`.
+
+The design changed first (ADR-002): `mergeFlow`'s last two states. Proved by
 `a_in_a_repo_with_auto_merge_off_offers_its_admin_the_setting`,
 `a_in_a_repo_with_auto_merge_off_tells_anyone_else_and_sends_nothing`,
 `a_batch_arm_skips_a_repo_with_auto_merge_off_by_name`,

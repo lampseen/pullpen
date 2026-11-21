@@ -517,3 +517,15 @@ async fn a_refused_repo_setting_arms_nothing() {
     let e = crate::run(&g, &job).await.unwrap_err();
     assert_eq!(e, Error::Refused("Must have admin rights to Repository.".into()));
 }
+
+#[test]
+fn what_github_would_merge_at_once_is_marked_so_it_is_never_armed() {
+    let g = GitHub::with_api("github.com", "http://x", "t".into(), Agents::default(), "", false);
+    let mut n = node();
+    for (status, now) in
+        [("CLEAN", true), ("UNSTABLE", true), ("HAS_HOOKS", true), ("BLOCKED", false), ("BEHIND", false)]
+    {
+        n["mergeStateStatus"] = json!(status);
+        assert_eq!(g.to_pr(&n, &Rules::default()).mergeable_now, now, "{status}");
+    }
+}

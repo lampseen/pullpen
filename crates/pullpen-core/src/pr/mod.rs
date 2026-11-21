@@ -144,6 +144,11 @@ pub struct Pr {
     pub checks: Checks,
     pub reviews: Reviews,
     pub mergeable: Mergeable,
+    /// The forge would merge this as it stands, so it refuses to arm it.
+    /// It can be true of a row that is not green: pullpen counts every
+    /// check where it cannot read which are required.
+    #[serde(default)]
+    pub mergeable_now: bool,
     pub auto_merge: Option<AutoMerge>,
     pub merge_train: Option<MergeTrainPos>,
     pub state: PrState,

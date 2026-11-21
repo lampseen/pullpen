@@ -45,6 +45,10 @@ pub enum PromptKind {
     },
     /// `M` on a PR that is only waiting: offer auto-merge instead.
     ArmInstead,
+    /// `A` on a PR the forge would merge at once and so will not arm.
+    MergeNow {
+        method: MergeMethod,
+    },
     /// `A` in a repo whose auto-merge setting is off, asked of its admin.
     AllowAuto {
         method: MergeMethod,
@@ -346,6 +350,11 @@ impl App {
                 let m = method.unwrap_or_else(|| self.default_method(&first));
                 self.start(vec![(first.id.clone(), Action::Merge { method: m }, true)], None, origin, typed)
             }
+            _ if first.mergeable_now => {
+                let method = method.unwrap_or_else(|| self.default_method(&first));
+                self.ask(PromptKind::MergeNow { method }, ids, origin, typed);
+                vec![]
+            }
             // The forge refuses every arm in such a repo, so nothing is sent
             // that cannot work; an admin is offered the setting instead.
             _ if self.caps_of(&first).auto_merge_off => {
@@ -437,6 +446,9 @@ impl App {
                 let m = pick(c, allowed).unwrap_or(MergeMethod::Squash);
                 self.start(vec![(ids[0].clone(), Action::Arm { method: m }, false)], None, origin, typed)
             }
+            (PromptKind::MergeNow { method }, Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), Action::Merge { method: *method }, false)], None, origin, typed)
+            }
             (PromptKind::AllowAuto { method }, Key::Char('y') | Key::Enter) => {
                 self.start(vec![(ids[0].clone(), Action::AllowAuto { method: *method }, false)], None, origin, typed)
             }
@@ -469,6 +481,11 @@ impl App {
                 }
                 Action::Arm { method } if r == Readiness::Ready => {
                     jobs.push((p.id.clone(), Action::Merge { method: *method }, true))
+                }
+                // Arming it would be refused, and merging a row that is not
+                // green is not what a batch arm was asked for.
+                Action::Arm { .. } if p.mergeable_now => {
+                    skipped.push((p.id.number, "can merge now: A on its own".into()))
                 }
                 // A batch never changes a repo's settings.
                 Action::Arm { .. } if self.caps_of(&p).auto_merge_off => {
@@ -763,6 +780,10 @@ impl App {
                     esc(&why)
                 )
             }
+            PromptKind::MergeNow { method } => format!(
+                "{{f|{what} can merge as it is, so there is nothing to arm. Merge with }}{{yB|{}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                method.word()
+            ),
             PromptKind::AllowAuto { method } => format!(
                 "{{f|{} has auto-merge off. Turn it on and arm }}{{B|{what}}}{{f| with }}{{yB|{}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}",
                 pr.map_or(String::new(), |p| esc(&p.id.repo)),

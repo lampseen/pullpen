@@ -500,6 +500,8 @@ function build(mode){
    lines:strip({prs:R4,sel:3,cmd:M('{f|Auto-merge off for #377}{d|   A to re-arm}')})},
   {k:'A · repo has auto-merge off',cap:'Offer to turn it on',note:'Only for someone who administers the repo. Anyone else is told the setting is off, and nothing is sent.',
    lines:strip({prs:R4,sel:3,st:{mode:'CONFIRM',modeK:'warn'},cmd:M('{f|acme/infra has auto-merge off. Turn it on and arm }{B|#377}{f| with }{yB|squash}{f|?}   {d|y/Enter yes   n/Esc cancel}')})},
+  {k:'A · nothing left to wait for',cap:'Offer to merge instead',note:'The forge would merge this PR as it stands and refuses to arm it, though a check that is not required may still be running. A asks before merging, because the row is not green.',
+   lines:strip({prs:R4,sel:3,st:{mode:'CONFIRM',modeK:'warn'},cmd:M('{f|#377 can merge as it is, so there is nothing to arm. Merge with }{yB|squash}{f|?}   {d|y/Enter yes   n/Esc cancel}')})},
  ];
  const MK=[812,377,143,1203,375], R13=P.slice(0,13);
  out.batch=[

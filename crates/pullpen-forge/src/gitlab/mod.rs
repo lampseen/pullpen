@@ -266,6 +266,7 @@ impl GitLab {
                 armed_by: s(n, "/mergeUser/username").into(),
                 armed_at: at,
             }),
+            mergeable_now: false,
             merge_train: n["mergeTrainIndex"].as_u64().map(|i| MergeTrainPos {
                 position: i as u32 + 1,
                 length: n["mergeTrainsCount"].as_u64().unwrap_or(0) as u32,
