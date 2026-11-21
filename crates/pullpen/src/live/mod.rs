@@ -215,9 +215,13 @@ const SETTLE: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
 
 fn settle(a: &Action) -> &'static [Duration] {
     match a {
-        Action::Merge { .. } | Action::Arm { .. } | Action::AllowAuto { .. } | Action::Close | Action::Update => {
-            &SETTLE
-        }
+        Action::Merge { .. }
+        | Action::Arm { .. }
+        | Action::AllowAuto { .. }
+        | Action::Close
+        | Action::Update
+        | Action::Rerun
+        | Action::Cancel => &SETTLE,
         _ => &[],
     }
 }

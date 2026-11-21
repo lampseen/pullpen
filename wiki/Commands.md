@@ -37,6 +37,8 @@ names; `↑` `↓` walk history, filtered by what you have typed.
 | `:clear` | in the Merged section, drop every finished row that is not failing |
 | `:dismiss [#n]` | in Deploys, resolve a failing branch by hand |
 | `:watch [#n]` | the PR's pipeline and its jobs' logs, live |
+| `:rerun [#n]` | run the failed jobs of the PR's newest pipeline again |
+| `:cancel [#n]` | stop the jobs of that pipeline that are still running |
 | `:q` `:qa` | back, or quit |
 
 Without a number, a command acts on the selected row, or on every marked row.

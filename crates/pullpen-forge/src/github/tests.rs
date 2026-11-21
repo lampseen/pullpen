@@ -529,3 +529,68 @@ fn what_github_would_merge_at_once_is_marked_so_it_is_never_armed() {
         assert_eq!(g.to_pr(&n, &Rules::default()).mergeable_now, now, "{status}");
     }
 }
+
+fn job_at(url: &str, state: CheckState) -> JobRun {
+    JobRun {
+        id: "1".into(),
+        name: "test".into(),
+        group: "ci".into(),
+        state,
+        started: None,
+        finished: None,
+        steps: vec![],
+        url: url.into(),
+        log: true,
+    }
+}
+
+#[tokio::test]
+async fn a_rerun_asks_each_workflow_run_once_for_its_failed_jobs() {
+    let server = MockServer::start().await;
+    for run in ["1", "2"] {
+        Mock::given(method("POST"))
+            .and(path(format!("/repos/o/r/actions/runs/{run}/rerun-failed-jobs")))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let jobs: Vec<JobRun> = ["runs/1/job/121", "runs/1/job/122", "runs/2/job/9"]
+        .map(|u| job_at(&format!("https://github.com/o/r/actions/{u}"), CheckState::Failed))
+        .to_vec();
+    gh(&server).rerun(&id(), &jobs).await.unwrap();
+    let e = gh(&server).rerun(&id(), &[job_at("https://circleci.com/x", CheckState::Failed)]).await.unwrap_err();
+    assert_eq!(e, Error::Refused("these checks are not GitHub Actions jobs".into()));
+}
+
+#[tokio::test]
+async fn cancel_stops_the_run_of_a_job_still_going_and_rerun_finds_nothing_failed() {
+    let server = MockServer::start().await;
+    let check = json!({
+        "databaseId": 121, "name": "test", "status": "IN_PROGRESS", "conclusion": null,
+        "startedAt": "2026-10-01T00:00:00Z", "completedAt": null,
+        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/121", "steps": { "nodes": [] }
+    });
+    let head = json!({ "oid": "9c01e7a2ff", "status": null, "checkSuites": { "nodes": [ {
+        "app": { "name": "GitHub Actions" }, "workflowRun": { "event": "pull_request", "workflow": { "name": "ci" } },
+        "checkRuns": { "nodes": [ check ] }
+    } ] } });
+    Mock::given(method("POST"))
+        .and(body_string_contains("fragment run on Commit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "repository": { "pullRequest": {
+            "url": "https://github.com/o/r/pull/7", "commits": { "nodes": [ { "commit": head } ] }, "mergeCommit": null
+        } } } })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/o/r/actions/runs/1/cancel"))
+        .respond_with(ResponseTemplate::new(202))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let note = crate::run(&g, &Job { id: 1, target: id(), action: Action::Cancel }).await.unwrap();
+    assert_eq!(note.as_deref(), Some("test"), "one job is named");
+    let e = crate::run(&g, &Job { id: 2, target: id(), action: Action::Rerun }).await.unwrap_err();
+    assert_eq!(e, Error::Refused("no failed jobs to run again".into()));
+}

@@ -113,6 +113,27 @@ impl GitHub {
         rules
     }
 
+    /// GitHub re-runs and cancels a workflow run, not a job, and refuses a
+    /// second request for a run it is already acting on: each run is asked
+    /// once. The run's id is only in a job's URL.
+    async fn each_run(&self, id: &PrId, jobs: &[JobRun], verb: &str) -> Result<()> {
+        let mut runs: Vec<&str> = jobs
+            .iter()
+            .filter_map(|j| j.url.split_once("/actions/runs/"))
+            .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
+            .filter(|r| !r.is_empty())
+            .collect();
+        runs.dedup();
+        if runs.is_empty() {
+            return Err(Error::Refused("these checks are not GitHub Actions jobs".into()));
+        }
+        for run in runs {
+            let path = format!("/repos/{}/actions/runs/{run}/{verb}", id.repo);
+            send(&self.host, self.req(reqwest::Method::POST, &path)).await?;
+        }
+        Ok(())
+    }
+
     /// A refused merge may be a ruleset pullpen read before it changed: the
     /// next sync reads the repo's rules again.
     fn forget_rules(&self, repo: &str) {
@@ -753,6 +774,14 @@ impl ForgeTrait for GitHub {
             c.entry(format!("{}/{repo}", self.host)).or_default().auto_merge_off = false;
         }
         Ok(())
+    }
+
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_run(id, jobs, "rerun-failed-jobs").await
+    }
+
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_run(id, jobs, "cancel").await
     }
 
     async fn approve(&self, id: &PrId) -> Result<()> {

@@ -18,6 +18,8 @@ pub enum Cmd {
     Update,
     Dismiss,
     Watch,
+    Rerun,
+    Cancel,
     Messages,
     Clear,
     Quit,
@@ -54,6 +56,8 @@ pub const COMMANDS: &[CmdInfo] = &[
     c("update", Cmd::Update, "bring the branch up to date with its base"),
     c("dismiss", Cmd::Dismiss, "resolve a failure after a merge by hand"),
     c("watch", Cmd::Watch, "the PR's pipeline, live"),
+    c("rerun", Cmd::Rerun, "run the pipeline's failed jobs again"),
+    c("cancel", Cmd::Cancel, "stop the pipeline's running jobs"),
 ];
 
 pub const ALIASES: &[(&str, Cmd)] = &[("am", Cmd::Automerge)];

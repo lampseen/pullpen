@@ -471,3 +471,30 @@ async fn a_rebase_that_fails_after_it_was_accepted_is_a_refusal() {
     let e = gl(&server, &[]).update(&id()).await.unwrap_err();
     assert_eq!(e, Error::Refused("Rebase failed. Please rebase locally".into()));
 }
+
+#[tokio::test]
+async fn rerun_and_cancel_ask_each_job_by_its_id() {
+    let server = MockServer::start().await;
+    for tail in ["55/retry", "56/retry", "55/cancel"] {
+        Mock::given(method("POST"))
+            .and(path(format!("/api/v4/projects/platform%2Frunner/jobs/{tail}")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let job = |id: &str| JobRun {
+        id: id.into(),
+        name: "test".into(),
+        group: "test".into(),
+        state: CheckState::Failed,
+        started: None,
+        finished: None,
+        steps: vec![],
+        url: String::new(),
+        log: true,
+    };
+    let g = gl(&server, &[]);
+    g.rerun(&id(), &[job("55"), job("56")]).await.unwrap();
+    g.cancel(&id(), &[job("55")]).await.unwrap();
+}

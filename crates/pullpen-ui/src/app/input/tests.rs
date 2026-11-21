@@ -456,3 +456,37 @@ fn an_action_that_finishes_after_its_row_left_still_says_so() {
     done(&mut a, fx);
     assert_eq!(said(&a), "✓ :approve #812 done   it has left this list");
 }
+
+fn command(a: &mut App, line: &str) -> Vec<Effect> {
+    a.key(Key::Char(':'), Instant::now());
+    text(a, line);
+    a.key(Key::Enter, Instant::now())
+}
+
+#[test]
+fn rerun_and_cancel_are_commands_and_say_which_jobs() {
+    let mut a = app();
+    a.section_mut().sel = 1;
+    let fx = command(&mut a, "rerun");
+    assert_eq!(sent(&fx), Some(pullpen_core::Action::Rerun));
+    for e in fx {
+        if let Effect::Run(job) = e {
+            let note = Some("3 jobs".to_string());
+            a.job_done(pullpen_core::JobResult { job, outcome: pullpen_core::Outcome::Done, note });
+        }
+    }
+    assert_eq!(said(&a), "✓ Re-ran #812   3 jobs");
+    assert_eq!(sent(&command(&mut a, "cancel #812")), Some(pullpen_core::Action::Cancel));
+}
+
+#[test]
+fn a_command_on_several_prs_asks_once() {
+    let mut a = app();
+    a.section_mut().marks = a.section().prs[..2].iter().map(|p| p.id.clone()).collect();
+    assert_eq!(sent(&command(&mut a, "rerun")), None, "nothing runs before the answer");
+    let Input::Confirm(p) = &a.input else { panic!("no prompt") };
+    let line: String = a.prompt_line(p).iter().map(|s| s.text.as_str()).collect();
+    assert!(line.starts_with(":rerun on 2 PRs?"), "{line}");
+    let fx = press(&mut a, &[Key::Char('y')]);
+    assert_eq!(sent(&fx), Some(pullpen_core::Action::Rerun));
+}

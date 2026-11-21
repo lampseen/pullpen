@@ -57,6 +57,8 @@ pub enum PromptKind {
     Approve,
     Comment(String),
     Update,
+    /// Any other action on several PRs at once, which asks once.
+    Several(Action),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +122,8 @@ pub fn verb(a: &Action) -> &'static str {
         Action::Comment(_) => "Commenting on",
         Action::Close => "Closing",
         Action::Update => "Updating",
+        Action::Rerun => "Re-running failed jobs of",
+        Action::Cancel => "Cancelling the pipeline of",
         Action::Checkout { .. } => "Checking out",
         Action::Open => "Opening",
         Action::Refresh { .. } => "Refreshing",
@@ -456,6 +460,7 @@ impl App {
             Action::Update if ids.len() > 1 => Some(PromptKind::Update),
             Action::Approve if ids.len() > 1 => Some(PromptKind::Approve),
             Action::Comment(t) if ids.len() > 1 => Some(PromptKind::Comment(t.clone())),
+            a if ids.len() > 1 => Some(PromptKind::Several(a.clone())),
             _ => None,
         };
         match kind {
@@ -509,6 +514,7 @@ impl App {
             (PromptKind::Close, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Close, origin, typed),
             (PromptKind::Update, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Update, origin, typed),
             (PromptKind::Approve, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Approve, origin, typed),
+            (PromptKind::Several(a), Key::Char('y') | Key::Enter) => self.run_batch(ids, a.clone(), origin, typed),
             (PromptKind::Comment(t), Key::Char('y') | Key::Enter) => {
                 let t = t.clone();
                 self.run_batch(ids, Action::Comment(t), origin, typed)
@@ -765,6 +771,12 @@ impl App {
                 };
                 markup(&format!("{{g|✓}} {{f|Updated #{n}}}{{d|   {how}}}"))
             }
+            Action::Rerun | Action::Cancel => {
+                let did = if run.job.action == Action::Rerun { "Re-ran" } else { "Cancelled" };
+                // The pipeline screen stops asking once every run is done.
+                self.poll.runs_asked = None;
+                markup(&format!("{{g|✓}} {{f|{did} #{n}}}{{d|   {}}}", esc(note.unwrap_or_default())))
+            }
             Action::Checkout { branch } => {
                 let wher = note.map_or(String::new(), |n| format!(" {}", esc(n)));
                 markup(&format!("{{g|✓}} {{f|Checked out #{n}}}{{d|   {}{wher}}}", esc(branch)))
@@ -860,6 +872,9 @@ impl App {
             PromptKind::Approve => format!("{{f|Approve }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}"),
             PromptKind::Update => {
                 format!("{{f|Bring }}{{B|{what}}}{{f| up to date with their base?}}   {{d|y/Enter yes   n/Esc cancel}}")
+            }
+            PromptKind::Several(a) => {
+                format!("{{f|:{} on }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}", a.command())
             }
             PromptKind::Comment(_) => {
                 format!("{{f|Comment on }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}")

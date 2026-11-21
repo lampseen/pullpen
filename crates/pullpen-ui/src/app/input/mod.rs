@@ -400,6 +400,8 @@ impl App {
             Cmd::Open => self.urls(&ids).into_iter().map(Effect::Open).collect(),
             Cmd::Close => self.request_simple(ids, Action::Close, o, typed),
             Cmd::Update => self.request_simple(ids, Action::Update, o, typed),
+            Cmd::Rerun => self.request_simple(ids, Action::Rerun, o, typed),
+            Cmd::Cancel => self.request_simple(ids, Action::Cancel, o, typed),
             Cmd::Dismiss => self.dismiss_here(&ids),
             Cmd::Watch => {
                 if let Some(id) = ids.into_iter().next() {

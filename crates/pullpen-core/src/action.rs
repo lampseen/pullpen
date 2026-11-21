@@ -25,6 +25,10 @@ pub enum Action {
     Checkout {
         branch: String,
     },
+    /// Run the failed jobs of the PR's newest pipeline again.
+    Rerun,
+    /// Stop the jobs of the PR's newest pipeline that have yet to finish.
+    Cancel,
     Open,
     Refresh {
         all: bool,
@@ -42,6 +46,8 @@ impl Action {
             Action::Close => "close",
             Action::Update => "update",
             Action::Checkout { .. } => "checkout",
+            Action::Rerun => "rerun",
+            Action::Cancel => "cancel",
             Action::Open => "open",
             Action::Refresh { .. } => "refresh",
         }

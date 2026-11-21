@@ -74,6 +74,14 @@ impl GitLab {
         graphql(&self.host, req, query, vars).await
     }
 
+    async fn each_job(&self, id: &PrId, jobs: &[JobRun], verb: &str) -> Result<()> {
+        for j in jobs {
+            let url = format!("{}/api/v4/projects/{}/jobs/{}/{verb}", self.base, encode_path(&id.repo), j.id);
+            send(&self.host, self.http.post(url).bearer_auth(&self.token)).await?;
+        }
+        Ok(())
+    }
+
     fn rest(&self, method: reqwest::Method, id: &PrId, tail: &str) -> reqwest::RequestBuilder {
         let url = format!("{}/api/v4/projects/{}/merge_requests/{}{tail}", self.base, encode_path(&id.repo), id.number);
         self.http.request(method, url).bearer_auth(&self.token)
@@ -569,6 +577,14 @@ impl ForgeTrait for GitLab {
 
     async fn disarm(&self, id: &PrId) -> Result<()> {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/cancel_merge_when_pipeline_succeeds")).await.map(|_| ())
+    }
+
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_job(id, jobs, "retry").await
+    }
+
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_job(id, jobs, "cancel").await
     }
 
     /// GitLab has no such switch: every project can arm.

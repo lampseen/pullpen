@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use pullpen_core::diff::FileDiff;
 use pullpen_core::query::Query;
-use pullpen_core::{Action, Capabilities, Forge as Kind, Job, MergeMethod, PipelineState, Pr, PrDetail, PrId, Run};
+use pullpen_core::{
+    Action, Capabilities, CheckState, Forge as Kind, Job, JobRun, MergeMethod, PipelineState, Pr, PrDetail, PrId, Run,
+};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -107,6 +109,10 @@ pub trait Forge: Send + Sync {
     async fn runs(&self, id: &PrId) -> Result<Vec<Run>>;
     /// A job's log so far, or its tail when long.
     async fn log(&self, id: &PrId, job: &str) -> Result<String>;
+    /// Runs these jobs of the PR's pipeline again.
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
+    /// Stops these jobs of the PR's pipeline.
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
 }
 
 /// Each (repo, base branch) that a merge failed on, once: whether the branch
@@ -149,9 +155,41 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         Action::Comment(body) => f.comment(id, body).await,
         Action::Close => f.close(id).await,
         Action::Update => f.update(id).await,
+        Action::Rerun | Action::Cancel => return pipeline(f, job).await.map(Some),
         Action::Checkout { .. } | Action::Open | Action::Refresh { .. } => Ok(()),
     };
     done.map(|()| None)
+}
+
+/// Re-runs what failed, or cancels what has yet to finish, in the PR's
+/// newest pipeline: the one after its merge if it has merged. Says how many
+/// jobs that was. A check from outside the forge's CI cannot be asked.
+async fn pipeline(f: &dyn Forge, job: &Job) -> Result<String> {
+    let rerun = job.action == Action::Rerun;
+    let wanted = |j: &&JobRun| match j.state {
+        CheckState::Failed => rerun,
+        CheckState::Running | CheckState::Queued => !rerun,
+        CheckState::Passed => false,
+    };
+    let runs = f.runs(&job.target).await?;
+    let jobs: Vec<JobRun> = runs
+        .first()
+        .into_iter()
+        .flat_map(|r| &r.jobs)
+        .filter(|j| j.log && !j.id.is_empty())
+        .filter(wanted)
+        .cloned()
+        .collect();
+    if jobs.is_empty() {
+        let none = if rerun { "no failed jobs to run again" } else { "no jobs still running" };
+        return Err(Error::Refused(none.into()));
+    }
+    if rerun {
+        f.rerun(&job.target, &jobs).await?
+    } else {
+        f.cancel(&job.target, &jobs).await?
+    }
+    Ok(if jobs.len() == 1 { jobs[0].name.clone() } else { format!("{} jobs", jobs.len()) })
 }
 
 #[cfg(test)]
