@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use pullpen_fixtures as fx;
 
 use super::*;
-use crate::app::SectionState;
+use crate::app::{DefaultMethod, SectionState};
 use crate::glyphs::Glyphs;
 use crate::paint::Theme;
 use crate::palette::{Palette, Tier};
@@ -178,4 +178,70 @@ fn m_on_a_pr_that_is_only_behind_names_the_key_that_updates_it() {
     let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
     assert!(line.starts_with("E  #812 is behind main") && line.ends_with("u updates the branch"), "{line}");
     assert!(matches!(a.input, Input::Normal), "no arm-instead prompt: arming would wait forever");
+}
+
+/// The first row that `A` would arm rather than merge or disarm.
+fn unarmed_waiting(a: &App) -> usize {
+    let s = a.section();
+    (0..s.prs.len())
+        .find(|&i| s.prs[i].auto_merge.is_none() && a.readiness(&s.prs[i]) == pullpen_core::Readiness::Waiting)
+        .unwrap()
+}
+
+fn refuse(a: &mut App, fx: Vec<Effect>) {
+    for e in fx {
+        if let Effect::Run(job) = e {
+            let outcome = pullpen_core::Outcome::Failed { reason: "Auto merge is not allowed".into() };
+            a.job_done(pullpen_core::JobResult { job, outcome, note: None });
+        }
+    }
+}
+
+#[test]
+fn a_refused_arm_takes_the_diamond_back_off_so_the_next_a_arms_again() {
+    let mut a = app();
+    a.ui.default_method = DefaultMethod::Fixed(pullpen_core::MergeMethod::Squash);
+    let i = unarmed_waiting(&a);
+    a.section_mut().sel = i;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert!(a.section().prs[i].auto_merge.is_some(), "armed at once, before the forge answers");
+    refuse(&mut a, fx);
+    assert!(a.section().prs[i].auto_merge.is_none(), "the forge refused: the row is not armed");
+
+    let fx = press(&mut a, &[Key::Char('A')]);
+    let again = fx.iter().find_map(|e| if let Effect::Run(j) = e { Some(j.action.clone()) } else { None });
+    assert!(
+        matches!(again, Some(pullpen_core::Action::Arm { .. })),
+        "not a disarm of an arm that never took: {again:?}"
+    );
+}
+
+#[test]
+fn a_refused_arm_waiting_its_turn_in_a_batch_is_taken_back_off_too() {
+    let mut a = app();
+    a.ui.default_method = DefaultMethod::Fixed(pullpen_core::MergeMethod::Squash);
+    let rows: Vec<usize> = {
+        let s = a.section();
+        (0..s.prs.len())
+            .filter(|&i| s.prs[i].auto_merge.is_none() && a.readiness(&s.prs[i]) == pullpen_core::Readiness::Waiting)
+            .take(2)
+            .collect()
+    };
+    assert_eq!(rows.len(), 2, "the fixture has two rows to arm");
+    let ids: Vec<_> = rows.iter().map(|&i| a.section().prs[i].id.clone()).collect();
+    a.section_mut().marks = ids;
+    let mut fx = press(&mut a, &[Key::Char('A'), Key::Char('y')]);
+    while !fx.is_empty() {
+        let mut next = Vec::new();
+        for e in fx {
+            if let Effect::Run(job) = e {
+                let outcome = pullpen_core::Outcome::Failed { reason: "no".into() };
+                next.extend(a.job_done(pullpen_core::JobResult { job, outcome, note: None }));
+            }
+        }
+        fx = next;
+    }
+    for i in rows {
+        assert!(a.section().prs[i].auto_merge.is_none(), "row {i} was refused");
+    }
 }

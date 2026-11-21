@@ -489,31 +489,20 @@ impl App {
             if merging_now && let Some(b) = batch {
                 self.batches[b].merging_now.push(job.target.number);
             }
+            // Read before the optimistic ◆ goes on: this is what a refusal
+            // puts back.
+            let before = self.find(&job.target).map(|p| p.auto_merge.clone());
             self.optimistic(&job, merging_now);
+            let run = Running { job: job.clone(), batch, origin, typed: typed.clone(), merging_now, before };
+            self.jobs.push(run);
             if !queued {
-                effects.push(self.launch(job, batch, origin, typed.clone(), merging_now));
-            } else {
-                self.jobs.push(Running { job, batch, origin, typed: typed.clone(), merging_now, before: None });
+                effects.push(Effect::Run(job));
             }
         }
         if let Some(b) = batch {
             self.report_batch(b);
         }
         effects
-    }
-
-    fn launch(
-        &mut self,
-        job: Job,
-        batch: Option<usize>,
-        origin: Origin,
-        typed: Option<String>,
-        merging_now: bool,
-    ) -> Effect {
-        let before = self.find(&job.target).map(|p| p.auto_merge.clone());
-        self.jobs.retain(|r| r.job.id != job.id);
-        self.jobs.push(Running { job: job.clone(), batch, origin, typed, merging_now, before });
-        Effect::Run(job)
     }
 
     /// Arming shows ◆ at once; the forge's answer confirms or reverts it.
@@ -608,7 +597,7 @@ impl App {
             self.batches[b].running = self.batches[b].running.saturating_sub(1);
             if let Some(next) = self.batches[b].queue.pop_front() {
                 self.batches[b].running += 1;
-                effects.push(self.launch(next, Some(b), run.origin, run.typed.clone(), false));
+                effects.push(Effect::Run(next));
             }
             self.report_batch(b);
         }
