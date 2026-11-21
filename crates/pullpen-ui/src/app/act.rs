@@ -256,9 +256,45 @@ impl App {
 
     fn default_method(&self, p: &Pr) -> MergeMethod {
         match self.ui.default_method {
-            DefaultMethod::Fixed(m) => m,
-            DefaultMethod::Repo => p.repo_default_method,
+            // A configured method is a preference across repos: one that
+            // does not allow it gets its own default, not a refusal.
+            DefaultMethod::Fixed(m) if p.repo_allowed_methods.is_empty() || p.repo_allowed_methods.contains(&m) => m,
+            _ => p.repo_default_method,
         }
+    }
+
+    /// Says so, and returns true, when a method named on the command line is
+    /// one the repo does not allow.
+    fn disallowed(&mut self, p: &Pr, method: Option<MergeMethod>, mode: Mode) -> bool {
+        let Some(m) = method.filter(|m| !p.repo_allowed_methods.is_empty() && !p.repo_allowed_methods.contains(m))
+        else {
+            return false;
+        };
+        let allowed: Vec<&str> = p.repo_allowed_methods.iter().map(|m| m.word()).collect();
+        let line = markup(&format!(
+            "{{r|E  {} doesn't allow {}}}{{d|      it allows {}}}",
+            esc(&p.id.repo),
+            m.word(),
+            allowed.join(", ")
+        ));
+        self.say(line, mode);
+        true
+    }
+
+    /// Says so, and returns true, when the PR waits on nothing but being
+    /// behind its base: auto-merge would wait on an update nobody asked
+    /// for, so name the key that makes one.
+    fn only_behind(&mut self, p: &Pr, mode: Mode) -> bool {
+        let behind = matches!(verdict(p, &self.caps_of(p)), Verdict::Waiting(w) if w.iter().all(|x| matches!(x, Wait::Behind { .. })));
+        if behind {
+            let line = markup(&format!(
+                "{{r|E  #{} is behind {}}}{{d|      u updates the branch}}",
+                p.id.number,
+                esc(&p.base)
+            ));
+            self.say(line, mode);
+        }
+        behind
     }
 
     fn allowed(&self, ids: &[PrId]) -> Vec<MergeMethod> {
@@ -280,28 +316,22 @@ impl App {
         typed: Option<String>,
     ) {
         let Some(first) = ids.first().and_then(|id| self.find(id)).cloned() else { return };
+        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
+        if self.disallowed(&first, method, mode) {
+            return;
+        }
         let method = method.unwrap_or_else(|| self.default_method(&first));
         if ids.len() > 1 {
             let allowed = self.allowed(&ids);
             return self.ask(PromptKind::Merge { method, allowed }, ids, origin, typed);
         }
-        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
         match verdict(&first, &self.caps_of(&first)) {
             _ if first.merged() => self.error(&format!("#{} is already merged", first.id.number), mode),
             Verdict::Ready => {
                 let allowed = first.repo_allowed_methods.clone();
                 self.ask(PromptKind::Merge { method, allowed }, ids, origin, typed)
             }
-            // Behind its base and nothing else: auto-merge would wait on an
-            // update nobody asked for, so say which key makes one.
-            Verdict::Waiting(w) if w.iter().all(|x| matches!(x, Wait::Behind { .. })) => {
-                let line = markup(&format!(
-                    "{{r|E  #{} is behind {}}}{{d|      u updates the branch}}",
-                    first.id.number,
-                    esc(&first.base)
-                ));
-                self.say(line, mode);
-            }
+            _ if self.only_behind(&first, mode) => {}
             Verdict::Waiting(_) => self.ask(PromptKind::ArmInstead, ids, origin, typed),
             Verdict::Blocked(_) => {
                 let (why, hint) = blockers(&first);
@@ -325,13 +355,16 @@ impl App {
         typed: Option<String>,
     ) -> Vec<Effect> {
         let Some(first) = ids.first().and_then(|id| self.find(id)).cloned() else { return vec![] };
+        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
+        if self.disallowed(&first, method, mode) {
+            return vec![];
+        }
         if ids.len() > 1 {
             let method = method.unwrap_or_else(|| self.default_method(&first));
             let allowed = self.allowed(&ids);
             self.ask(PromptKind::Arm { method, allowed }, ids, origin, typed);
             return vec![];
         }
-        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
         if let Some(a) = &first.auto_merge
             && method.is_none_or(|m| m == a.method)
         {
@@ -350,6 +383,7 @@ impl App {
                 let m = method.unwrap_or_else(|| self.default_method(&first));
                 self.start(vec![(first.id.clone(), Action::Merge { method: m }, true)], None, origin, typed)
             }
+            _ if self.only_behind(&first, mode) => vec![],
             _ if first.mergeable_now => {
                 let method = method.unwrap_or_else(|| self.default_method(&first));
                 self.ask(PromptKind::MergeNow { method }, ids, origin, typed);
@@ -372,7 +406,8 @@ impl App {
                 vec![]
             }
             _ => match (method, self.ui.default_method) {
-                (Some(m), _) | (None, DefaultMethod::Fixed(m)) => {
+                (Some(_), _) | (None, DefaultMethod::Fixed(_)) => {
+                    let m = method.unwrap_or_else(|| self.default_method(&first));
                     self.start(vec![(first.id.clone(), Action::Arm { method: m }, false)], None, origin, typed)
                 }
                 (None, DefaultMethod::Repo) if first.repo_allowed_methods.len() > 1 => {

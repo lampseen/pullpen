@@ -321,3 +321,59 @@ fn a_batch_arm_skips_a_pr_the_forge_would_merge_at_once() {
     let line: String = a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect();
     assert!(line.contains(&format!("skipped #{n}: can merge now")), "{line}");
 }
+
+fn said(a: &App) -> String {
+    a.message.as_ref().unwrap().line.iter().map(|s| s.text.as_str()).collect()
+}
+
+fn sent(fx: &[Effect]) -> Option<pullpen_core::Action> {
+    fx.iter().find_map(|e| if let Effect::Run(j) = e { Some(j.action.clone()) } else { None })
+}
+
+#[test]
+fn a_configured_method_the_repo_does_not_allow_gives_way_to_the_repos_own() {
+    use pullpen_core::MergeMethod::{Merge, Rebase, Squash};
+    let mut a = app();
+    a.ui.default_method = DefaultMethod::Fixed(Rebase);
+    let i = unarmed_waiting(&a);
+    a.section_mut().prs[i].repo_allowed_methods = vec![Squash, Merge];
+    a.section_mut().prs[i].repo_default_method = Squash;
+    a.section_mut().sel = i;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert_eq!(sent(&fx), Some(pullpen_core::Action::Arm { method: Squash }));
+}
+
+#[test]
+fn a_typed_method_the_repo_does_not_allow_is_refused_before_it_is_sent() {
+    use pullpen_core::MergeMethod::{Merge, Squash};
+    let mut a = app();
+    let i = unarmed_waiting(&a);
+    a.section_mut().prs[i].repo_allowed_methods = vec![Squash, Merge];
+    a.section_mut().sel = i;
+    let ids = a.targets(None);
+    let fx = a.request_arm(ids.clone(), Some(pullpen_core::MergeMethod::Rebase), Origin::Key, None);
+    assert!(fx.is_empty());
+    assert!(said(&a).contains("doesn't allow rebase") && said(&a).ends_with("it allows squash, merge"), "{}", said(&a));
+    a.request_merge(ids, Some(pullpen_core::MergeMethod::Rebase), Origin::Key, None);
+    assert!(matches!(a.input, Input::Normal), "no merge prompt for a method that cannot work");
+}
+
+#[test]
+fn a_on_a_pr_that_is_only_behind_names_the_key_that_updates_it() {
+    let mut a = app();
+    let id = a.section().prs[1].id.clone();
+    a.caps.insert(
+        format!("{}/{}", id.host, id.repo),
+        pullpen_core::Capabilities { requires_up_to_date: true, ..Default::default() },
+    );
+    a.section_mut().prs[1].mergeable = pullpen_core::Mergeable::Behind;
+    a.section_mut().sel = 1;
+    let fx = press(&mut a, &[Key::Char('A')]);
+    assert!(fx.is_empty(), "an arm would wait on an update nobody asked for");
+    assert!(
+        said(&a).starts_with("E  #812 is behind main") && said(&a).ends_with("u updates the branch"),
+        "{}",
+        said(&a)
+    );
+    assert!(a.section().prs[1].auto_merge.is_none());
+}
