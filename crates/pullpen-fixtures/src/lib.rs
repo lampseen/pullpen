@@ -170,6 +170,7 @@ fn expand(x: &Raw) -> Pr {
             armed_by: "ash".into(),
             armed_at: ago("2h"),
         }),
+        mergeable_now: false,
         merge_train: None,
         state: PrState::Open,
         // The design's detail view says #4821 was opened 3h ago and updated

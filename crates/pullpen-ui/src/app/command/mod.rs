@@ -18,6 +18,17 @@ pub enum Cmd {
     Update,
     Dismiss,
     Watch,
+    Rerun,
+    Cancel,
+    Ready,
+    Draft,
+    Reopen,
+    RequestChanges,
+    Review,
+    Label,
+    Assign,
+    Title,
+    New,
     Messages,
     Clear,
     Quit,
@@ -54,6 +65,17 @@ pub const COMMANDS: &[CmdInfo] = &[
     c("update", Cmd::Update, "bring the branch up to date with its base"),
     c("dismiss", Cmd::Dismiss, "resolve a failure after a merge by hand"),
     c("watch", Cmd::Watch, "the PR's pipeline, live"),
+    c("rerun", Cmd::Rerun, "run the pipeline's failed jobs again"),
+    c("cancel", Cmd::Cancel, "stop the pipeline's running jobs"),
+    c("ready", Cmd::Ready, "mark ready for review"),
+    c("draft", Cmd::Draft, "put back to draft"),
+    c("reopen", Cmd::Reopen, "reopen a closed PR"),
+    c("request-changes", Cmd::RequestChanges, "review asking for changes"),
+    c("review", Cmd::Review, "ask people for a review"),
+    c("label", Cmd::Label, "add +labels, remove -labels"),
+    c("assign", Cmd::Assign, "assign people, or yourself"),
+    c("title", Cmd::Title, "change the title"),
+    c("new", Cmd::New, "open a PR for the branch you are on"),
 ];
 
 pub const ALIASES: &[(&str, Cmd)] = &[("am", Cmd::Automerge)];
@@ -121,6 +143,11 @@ pub fn resolve(t: &TargetRef, rows: &[Pr]) -> Resolved {
             }
         }
     }
+}
+
+/// The logins in a command's arguments, with or without their `@`.
+pub fn logins(rest: &str) -> Vec<String> {
+    rest.split_whitespace().map(|w| w.trim_start_matches('@').to_string()).filter(|w| !w.is_empty()).collect()
 }
 
 pub fn parse_method(tok: &str) -> Option<MergeMethod> {

@@ -236,6 +236,10 @@ async fn update_rebases_through_the_rebase_endpoint() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "rebase_in_progress": false })))
+        .mount(&server)
+        .await;
     gl(&server, &[]).update(&id()).await.unwrap();
 }
 
@@ -424,4 +428,193 @@ async fn an_unchecked_merge_request_is_ready_and_a_checking_one_is_not() {
     let ready = |p: &Pr| readiness(p, &Capabilities::default());
     assert_eq!(ready(&mr("UNCHECKED")), Readiness::Ready);
     assert_eq!(ready(&mr("CHECKING")), Readiness::Waiting, "GitLab is mid-check: seconds, not until asked");
+}
+
+async fn rebase_then(server: &MockServer, answers: &[Value]) {
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/platform%2Frunner/merge_requests/812/rebase"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(json!({ "rebase_in_progress": true })))
+        .mount(server)
+        .await;
+    for (i, a) in answers.iter().enumerate() {
+        let last = i + 1 == answers.len();
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/platform%2Frunner/merge_requests/812"))
+            .and(wiremock::matchers::query_param("include_rebase_in_progress", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(a))
+            .up_to_n_times(if last { u64::MAX } else { 1 })
+            .mount(server)
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn an_update_waits_for_the_rebase_to_finish() {
+    let server = MockServer::start().await;
+    rebase_then(
+        &server,
+        &[
+            json!({ "rebase_in_progress": true, "merge_error": null }),
+            json!({ "rebase_in_progress": false, "merge_error": null }),
+        ],
+    )
+    .await;
+    gl(&server, &[]).update(&id()).await.unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 3, "the rebase, then asked twice");
+}
+
+#[tokio::test]
+async fn a_rebase_that_fails_after_it_was_accepted_is_a_refusal() {
+    let server = MockServer::start().await;
+    let failed = json!({ "rebase_in_progress": false, "merge_error": "Rebase failed. Please rebase locally" });
+    rebase_then(&server, &[failed]).await;
+    let e = gl(&server, &[]).update(&id()).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Rebase failed. Please rebase locally".into()));
+}
+
+#[tokio::test]
+async fn rerun_and_cancel_ask_each_job_by_its_id() {
+    let server = MockServer::start().await;
+    for tail in ["55/retry", "56/retry", "55/cancel"] {
+        Mock::given(method("POST"))
+            .and(path(format!("/api/v4/projects/platform%2Frunner/jobs/{tail}")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let job = |id: &str| JobRun {
+        id: id.into(),
+        name: "test".into(),
+        group: "test".into(),
+        state: CheckState::Failed,
+        started: None,
+        finished: None,
+        steps: vec![],
+        url: String::new(),
+        log: true,
+    };
+    let g = gl(&server, &[]);
+    g.rerun(&id(), &[job("55"), job("56")]).await.unwrap();
+    g.cancel(&id(), &[job("55")]).await.unwrap();
+}
+
+#[tokio::test]
+async fn review_workflow_writes_use_gitlabs_mutations_by_username() {
+    let server = MockServer::start().await;
+    let at = "/api/v4/projects/platform%2Frunner/merge_requests/812";
+    let ok = || ResponseTemplate::new(200).set_body_json(json!({}));
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "state_event": "reopen" })))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{at}/notes")))
+        .and(body_partial_json(json!({ "body": "rename it" })))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let on = json!({ "projectPath": "platform/runner", "iid": "812" });
+    let mutations = [
+        ("mergeRequestSetDraft", "MergeRequestSetDraftInput", json!({ "draft": false })),
+        ("mergeRequestRequestChanges", "MergeRequestRequestChangesInput", json!({})),
+        (
+            "mergeRequestSetReviewers",
+            "MergeRequestSetReviewersInput",
+            json!({ "reviewerUsernames": ["mara"], "operationMode": "APPEND" }),
+        ),
+    ];
+    for (name, ty, input) in mutations {
+        Mock::given(method("POST"))
+            .and(body_string_contains(format!("$i:{ty}!")))
+            .and(body_partial_json(json!({ "variables": { "i": on } })))
+            .and(body_partial_json(json!({ "variables": { "i": input } })))
+            .respond_with(ok().set_body_json(json!({ "data": { name: { "errors": [] } } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gl(&server, &[]);
+    g.reopen(&id()).await.unwrap();
+    g.ready(&id(), true).await.unwrap();
+    g.request_changes(&id(), "rename it").await.unwrap();
+    g.request_review(&id(), &["mara".to_string()]).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_mutations_own_errors_are_a_refusal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "mergeRequestSetReviewers": { "errors": ["Cannot assign reviewers: no user named nobody"] } }
+        })))
+        .mount(&server)
+        .await;
+    let e = gl(&server, &[]).request_review(&id(), &["nobody".to_string()]).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Cannot assign reviewers: no user named nobody".into()));
+}
+
+#[tokio::test]
+async fn labels_titles_and_assignees_are_written_and_the_labels_left_come_back() {
+    let server = MockServer::start().await;
+    let at = "/api/v4/projects/platform%2Frunner/merge_requests/812";
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "add_labels": "infra,ci", "remove_labels": "wip" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "labels": ["ci", "infra"] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(at))
+        .and(body_partial_json(json!({ "title": "Runner: retry on 502" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("$i:MergeRequestSetAssigneesInput!"))
+        .and(body_partial_json(
+            json!({ "variables": { "i": { "assigneeUsernames": ["mara"], "operationMode": "APPEND" } } }),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "mergeRequestSetAssignees": { "errors": [] } } })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gl(&server, &[]);
+    let now = g.label(&id(), &["infra".to_string(), "ci".to_string()], &["wip".to_string()]).await.unwrap();
+    assert_eq!(now, ["ci", "infra"]);
+    g.retitle(&id(), "Runner: retry on 502").await.unwrap();
+    g.assign(&id(), &["mara".to_string()]).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_new_mr_goes_to_the_projects_default_branch_unless_told() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/platform%2Frunner"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mr = json!({ "source_branch": "feat/retry", "target_branch": "main", "title": "Retry", "description": "why" });
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/platform%2Frunner/merge_requests"))
+        .and(body_partial_json(mr))
+        .respond_with(
+            ResponseTemplate::new(201)
+                .set_body_json(json!({ "web_url": "https://gitlab.com/platform/runner/-/merge_requests/813" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let url = gl(&server, &[]).create("platform/runner", "feat/retry", None, "Retry", "why").await.unwrap();
+    assert_eq!(url, "https://gitlab.com/platform/runner/-/merge_requests/813");
 }

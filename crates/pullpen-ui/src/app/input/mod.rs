@@ -400,6 +400,42 @@ impl App {
             Cmd::Open => self.urls(&ids).into_iter().map(Effect::Open).collect(),
             Cmd::Close => self.request_simple(ids, Action::Close, o, typed),
             Cmd::Update => self.request_simple(ids, Action::Update, o, typed),
+            Cmd::Rerun => self.request_simple(ids, Action::Rerun, o, typed),
+            Cmd::Ready => self.request_simple(ids, Action::Ready(true), o, typed),
+            Cmd::Draft => self.request_simple(ids, Action::Ready(false), o, typed),
+            Cmd::Reopen => self.request_simple(ids, Action::Reopen, o, typed),
+            Cmd::New => {
+                let base = Some(p.rest.trim().to_string()).filter(|b| !b.is_empty());
+                vec![Effect::New { base }]
+            }
+            Cmd::Assign if p.rest.trim().is_empty() => {
+                let me = vec![self.me.clone()];
+                self.request_simple(ids, Action::Assign(me), o, typed)
+            }
+            Cmd::Assign => self.request_simple(ids, Action::Assign(command::logins(p.rest)), o, typed),
+            Cmd::Title if ids.len() > 1 => {
+                return self.command_error(&line, "title: one PR at a time", None);
+            }
+            Cmd::Label | Cmd::Title | Cmd::RequestChanges | Cmd::Review if p.rest.trim().is_empty() => {
+                let need = match cmd {
+                    Cmd::Review => "who should review, as @login",
+                    Cmd::Label => "which, as +add or -remove",
+                    Cmd::Title => "the new title",
+                    _ => "what needs changing",
+                };
+                return self.command_error(&line, &format!("{}: say {need}", p.name), None);
+            }
+            Cmd::Title => self.request_simple(ids, Action::Title(p.rest.trim().to_string()), o, typed),
+            Cmd::Label => {
+                let (remove, add): (Vec<&str>, Vec<&str>) = p.rest.split_whitespace().partition(|w| w.starts_with('-'));
+                let name = |w: &&str| w.trim_start_matches(['+', '-']).to_string();
+                let action =
+                    Action::Label { add: add.iter().map(name).collect(), remove: remove.iter().map(name).collect() };
+                self.request_simple(ids, action, o, typed)
+            }
+            Cmd::RequestChanges => self.request_simple(ids, Action::RequestChanges(p.rest.to_string()), o, typed),
+            Cmd::Review => self.request_simple(ids, Action::Review(command::logins(p.rest)), o, typed),
+            Cmd::Cancel => self.request_simple(ids, Action::Cancel, o, typed),
             Cmd::Dismiss => self.dismiss_here(&ids),
             Cmd::Watch => {
                 if let Some(id) = ids.into_iter().next() {

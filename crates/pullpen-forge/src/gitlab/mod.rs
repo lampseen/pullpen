@@ -20,6 +20,9 @@ const RUNS: &str = include_str!("runs.graphql");
 const LANDED: &str = include_str!("landed.graphql");
 /// A running job's log is asked for every few seconds; its tail is enough.
 const LOG_TAIL: usize = 256 * 1024;
+/// How often, and how many times, a rebase is asked whether it has finished.
+/// One that outlasts this is left to the syncs that follow an update.
+const REBASE_POLL: (std::time::Duration, usize) = (std::time::Duration::from_millis(500), 40);
 
 pub struct GitLab {
     http: reqwest::Client,
@@ -69,6 +72,27 @@ impl GitLab {
     async fn gql(&self, query: &str, vars: Value) -> Result<Value> {
         let req = self.http.post(format!("{}/api/graphql", self.base)).bearer_auth(&self.token);
         graphql(&self.host, req, query, vars).await
+    }
+
+    /// One of GitLab's merge request mutations, which take usernames where
+    /// REST wants numeric ids. They report a refusal in their own `errors`,
+    /// beside a null result, not as a GraphQL error.
+    async fn mutate(&self, name: &str, id: &PrId, mut input: Value) -> Result<()> {
+        input["projectPath"] = json!(id.repo);
+        input["iid"] = json!(id.number.to_string());
+        let ty = format!("{}{}Input", name[..1].to_uppercase(), &name[1..]);
+        let q = format!("mutation($i:{ty}!){{{name}(input:$i){{errors}}}}");
+        let d = self.gql(&q, json!({ "i": input })).await?;
+        let errors: Vec<&str> = d[name]["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        if errors.is_empty() { Ok(()) } else { Err(Error::Refused(errors.join("; "))) }
+    }
+
+    async fn each_job(&self, id: &PrId, jobs: &[JobRun], verb: &str) -> Result<()> {
+        for j in jobs {
+            let url = format!("{}/api/v4/projects/{}/jobs/{}/{verb}", self.base, encode_path(&id.repo), j.id);
+            send(&self.host, self.http.post(url).bearer_auth(&self.token)).await?;
+        }
+        Ok(())
     }
 
     fn rest(&self, method: reqwest::Method, id: &PrId, tail: &str) -> reqwest::RequestBuilder {
@@ -266,6 +290,7 @@ impl GitLab {
                 armed_by: s(n, "/mergeUser/username").into(),
                 armed_at: at,
             }),
+            mergeable_now: false,
             merge_train: n["mergeTrainIndex"].as_u64().map(|i| MergeTrainPos {
                 position: i as u32 + 1,
                 length: n["mergeTrainsCount"].as_u64().unwrap_or(0) as u32,
@@ -567,6 +592,69 @@ impl ForgeTrait for GitLab {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/cancel_merge_when_pipeline_succeeds")).await.map(|_| ())
     }
 
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()> {
+        self.mutate("mergeRequestSetDraft", id, json!({ "draft": !ready })).await
+    }
+
+    async fn reopen(&self, id: &PrId) -> Result<()> {
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&json!({ "state_event": "reopen" })))
+            .await
+            .map(|_| ())
+    }
+
+    /// GitLab's request for changes carries no text, so the text is a
+    /// comment posted first: a refusal of the comment asks for nothing.
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()> {
+        self.comment(id, body).await?;
+        self.mutate("mergeRequestRequestChanges", id, json!({})).await
+    }
+
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let input = json!({ "reviewerUsernames": logins, "operationMode": "APPEND" });
+        self.mutate("mergeRequestSetReviewers", id, input).await
+    }
+
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>> {
+        let body = json!({ "add_labels": add.join(","), "remove_labels": remove.join(",") });
+        let mr = send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&body)).await?;
+        Ok(mr["labels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect())
+    }
+
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let input = json!({ "assigneeUsernames": logins, "operationMode": "APPEND" });
+        self.mutate("mergeRequestSetAssignees", id, input).await
+    }
+
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()> {
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&json!({ "title": title }))).await.map(|_| ())
+    }
+
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String> {
+        let at = format!("{}/api/v4/projects/{}", self.base, encode_path(repo));
+        let base = match base {
+            Some(b) => b.to_string(),
+            None => {
+                s(&send(&self.host, self.http.get(&at).bearer_auth(&self.token)).await?, "/default_branch").to_string()
+            }
+        };
+        let mr = json!({ "source_branch": head, "target_branch": base, "title": title, "description": body });
+        let req = self.http.post(format!("{at}/merge_requests")).bearer_auth(&self.token).json(&mr);
+        Ok(s(&send(&self.host, req).await?, "/web_url").to_string())
+    }
+
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_job(id, jobs, "retry").await
+    }
+
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_job(id, jobs, "cancel").await
+    }
+
+    /// GitLab has no such switch: every project can arm.
+    async fn allow_auto(&self, _repo: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn approve(&self, id: &PrId) -> Result<()> {
         send(&self.host, self.rest(reqwest::Method::POST, id, "/approve")).await.map(|_| ())
     }
@@ -583,8 +671,21 @@ impl ForgeTrait for GitLab {
             .map(|_| ())
     }
 
+    /// GitLab only queues a rebase and answers 202. Whether it worked is on
+    /// the MR afterwards: a conflict shows as `merge_error`, nowhere else.
     async fn update(&self, id: &PrId) -> Result<()> {
-        send(&self.host, self.rest(reqwest::Method::PUT, id, "/rebase")).await.map(|_| ())
+        send(&self.host, self.rest(reqwest::Method::PUT, id, "/rebase")).await?;
+        for _ in 0..REBASE_POLL.1 {
+            let mr = send(&self.host, self.rest(reqwest::Method::GET, id, "?include_rebase_in_progress=true")).await?;
+            if mr["rebase_in_progress"] != true {
+                return match mr["merge_error"].as_str().filter(|e| !e.is_empty()) {
+                    Some(e) => Err(Error::Refused(e.to_string())),
+                    None => Ok(()),
+                };
+            }
+            tokio::time::sleep(REBASE_POLL.0).await;
+        }
+        Ok(())
     }
 
     async fn runs(&self, id: &PrId) -> Result<Vec<Run>> {

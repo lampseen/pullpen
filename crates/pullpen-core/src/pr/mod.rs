@@ -144,6 +144,11 @@ pub struct Pr {
     pub checks: Checks,
     pub reviews: Reviews,
     pub mergeable: Mergeable,
+    /// The forge would merge this as it stands, so it refuses to arm it.
+    /// It can be true of a row that is not green: pullpen counts every
+    /// check where it cannot read which are required.
+    #[serde(default)]
+    pub mergeable_now: bool,
     pub auto_merge: Option<AutoMerge>,
     pub merge_train: Option<MergeTrainPos>,
     pub state: PrState,
@@ -194,6 +199,13 @@ pub struct Capabilities {
     pub allowed_methods: Vec<MergeMethod>,
     pub merge_trains: bool,
     pub requires_up_to_date: bool,
+    /// The repo's own switch for auto-merge is off, so an arm is refused
+    /// whatever the PR's state. Only GitHub has such a switch.
+    #[serde(default)]
+    pub auto_merge_off: bool,
+    /// The signed-in user may change the repo's settings.
+    #[serde(default)]
+    pub can_admin: bool,
 }
 
 /// The one-cell answer to "safe to merge?". Variants are in glyph precedence

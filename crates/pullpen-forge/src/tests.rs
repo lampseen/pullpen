@@ -48,3 +48,14 @@ fn a_configured_command_is_the_last_resort() {
     let t = auth::token(pullpen_core::Forge::GitLab, "nowhere.invalid", None, Some("echo from-cmd"), none).unwrap();
     assert_eq!(t, "from-cmd");
 }
+
+#[tokio::test]
+async fn a_network_failure_says_why_and_never_where() {
+    // A port nothing listens on: taken, then given back.
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let req = http::client().put(format!("http://127.0.0.1:{port}/repos/o/r?token=s3cret"));
+    let Err(Error::Network(why)) = http::send("github.com", req).await else { panic!("it cannot have connected") };
+    let cause = why.strip_prefix("github.com: error sending request: ").unwrap_or_else(|| panic!("no cause: {why}"));
+    assert!(!cause.is_empty());
+    assert!(!why.contains("s3cret") && !why.contains("127.0.0.1"), "{why}");
+}

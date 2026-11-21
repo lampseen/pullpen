@@ -10,13 +10,17 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use pullpen_core::diff::FileDiff;
 use pullpen_core::query::Query;
-use pullpen_core::{Action, Capabilities, Forge as Kind, Job, MergeMethod, PipelineState, Pr, PrDetail, PrId, Run};
+use pullpen_core::{
+    Action, Capabilities, CheckState, Forge as Kind, Job, JobRun, MergeMethod, PipelineState, Pr, PrDetail, PrId, Run,
+};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
     #[error("not signed in to {0}; set a token or run its CLI's login")]
     Auth(String),
-    #[error("rate limited; retrying in {retry_in}s")]
+    /// The words are for an action, which nothing retries; the sync loop,
+    /// which does retry, has its own.
+    #[error("rate limited; try again in {retry_in}s")]
     RateLimited { retry_in: u64 },
     #[error("{host} {status}")]
     Server { host: String, status: u16 },
@@ -91,6 +95,8 @@ pub trait Forge: Send + Sync {
     async fn merge(&self, id: &PrId, m: MergeMethod) -> Result<bool>;
     async fn arm(&self, id: &PrId, m: MergeMethod) -> Result<()>;
     async fn disarm(&self, id: &PrId) -> Result<()>;
+    /// Turns on the repo setting that `arm` needs.
+    async fn allow_auto(&self, repo: &str) -> Result<()>;
     async fn approve(&self, id: &PrId) -> Result<()>;
     async fn comment(&self, id: &PrId, body: &str) -> Result<()>;
     async fn close(&self, id: &PrId) -> Result<()>;
@@ -103,6 +109,23 @@ pub trait Forge: Send + Sync {
     async fn runs(&self, id: &PrId) -> Result<Vec<Run>>;
     /// A job's log so far, or its tail when long.
     async fn log(&self, id: &PrId, job: &str) -> Result<String>;
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()>;
+    async fn reopen(&self, id: &PrId) -> Result<()>;
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()>;
+    /// Adds reviewers; those already asked stay asked.
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()>;
+    /// The PR's labels afterwards.
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>>;
+    /// Adds assignees; those already assigned stay.
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()>;
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()>;
+    /// Opens a PR and answers with its URL. No `base` means the repo's
+    /// default branch.
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String>;
+    /// Runs these jobs of the PR's pipeline again.
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
+    /// Stops these jobs of the PR's pipeline.
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
 }
 
 /// Each (repo, base branch) that a merge failed on, once: whether the branch
@@ -137,13 +160,62 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         }
         Action::Arm { method } => f.arm(id, *method).await,
         Action::Disarm => f.disarm(id).await,
+        Action::AllowAuto { method } => {
+            f.allow_auto(&id.repo).await?;
+            f.arm(id, *method).await
+        }
         Action::Approve => f.approve(id).await,
         Action::Comment(body) => f.comment(id, body).await,
         Action::Close => f.close(id).await,
         Action::Update => f.update(id).await,
+        Action::Ready(ready) => f.ready(id, *ready).await,
+        Action::Reopen => f.reopen(id).await,
+        Action::RequestChanges(body) => f.request_changes(id, body).await,
+        Action::Review(logins) => f.request_review(id, logins).await,
+        Action::Label { add, remove } => {
+            let now = f.label(id, add, remove).await?;
+            return Ok(Some(if now.is_empty() { "no labels now".into() } else { format!("now {}", now.join(", ")) }));
+        }
+        Action::Assign(logins) => f.assign(id, logins).await,
+        Action::Title(title) => f.retitle(id, title).await,
+        Action::Create { head, base, title, body } => {
+            return f.create(&id.repo, head, base.as_deref(), title, body).await.map(Some);
+        }
+        Action::Rerun | Action::Cancel => return pipeline(f, job).await.map(Some),
         Action::Checkout { .. } | Action::Open | Action::Refresh { .. } => Ok(()),
     };
     done.map(|()| None)
+}
+
+/// Re-runs what failed, or cancels what has yet to finish, in the PR's
+/// newest pipeline: the one after its merge if it has merged. Says how many
+/// jobs that was. A check from outside the forge's CI cannot be asked.
+async fn pipeline(f: &dyn Forge, job: &Job) -> Result<String> {
+    let rerun = job.action == Action::Rerun;
+    let wanted = |j: &&JobRun| match j.state {
+        CheckState::Failed => rerun,
+        CheckState::Running | CheckState::Queued => !rerun,
+        CheckState::Passed => false,
+    };
+    let runs = f.runs(&job.target).await?;
+    let jobs: Vec<JobRun> = runs
+        .first()
+        .into_iter()
+        .flat_map(|r| &r.jobs)
+        .filter(|j| j.log && !j.id.is_empty())
+        .filter(wanted)
+        .cloned()
+        .collect();
+    if jobs.is_empty() {
+        let none = if rerun { "no failed jobs to run again" } else { "no jobs still running" };
+        return Err(Error::Refused(none.into()));
+    }
+    if rerun {
+        f.rerun(&job.target, &jobs).await?
+    } else {
+        f.cancel(&job.target, &jobs).await?
+    }
+    Ok(if jobs.len() == 1 { jobs[0].name.clone() } else { format!("{} jobs", jobs.len()) })
 }
 
 #[cfg(test)]

@@ -545,3 +545,147 @@ merge under ten minutes old with no pipeline yet reads "pipeline not
 started", not "no pipeline". The design changed first (ADR-002):
 `mergedFacts`, and the pipeline screen's header.
 
+
+## ADR-026 — `A` knows a repo with auto-merge off, and its admin may turn it on
+
+GitHub has a per-repository switch for auto-merge, off by default. In a repo
+with it off every arm is refused, whatever the PR's state. pullpen never
+asked about the switch, so `A` sent an arm that could not work and showed
+the forge's refusal.
+
+The search now reads `autoMergeAllowed` and `viewerCanAdminister` from the
+repository, both checked against GitHub's published schema. With the switch
+off, `A` sends no arm. Someone who administers the repo is asked once
+whether to turn it on and arm the PR, and `y` does both: `PATCH /repos/{repo}`
+with `allow_auto_merge`, then the arm. Anyone else is told the setting is
+off and who can change it. A batch skips such PRs by name and never changes
+a setting. GitLab has no such switch.
+
+The counter-argument is that a queue of pull requests has no business
+writing repository settings, and the north star's list of actions has none.
+It survives as one setting, asked for each time, only where the forge would
+otherwise refuse the action the user just asked for.
+
+A separate fault made this look worse than a refusal. The state a refused
+arm restores was read after the row had already been shown armed, so the ◆
+stayed and the next `A` sent a disarm for an arm that never took.
+
+**What the forge would merge at once is not armed.** GitHub also refuses to
+arm a PR it would merge as it stands (ADR-007), and that can be a row
+pullpen shows as waiting: where no ruleset names the required checks, every
+check counts. `mergeStateStatus` of `CLEAN`, `UNSTABLE` or `HAS_HOOKS` now
+marks such a PR. `A` on one asks whether to merge it, because the row is not
+green, and a batch arm skips it by name. Proved by
+`a_on_a_pr_the_forge_would_merge_at_once_asks_to_merge_and_never_arms`,
+`a_batch_arm_skips_a_pr_the_forge_would_merge_at_once` and
+`what_github_would_merge_at_once_is_marked_so_it_is_never_armed`.
+
+The design changed first (ADR-002): `mergeFlow`'s last two states. Proved by
+`a_in_a_repo_with_auto_merge_off_offers_its_admin_the_setting`,
+`a_in_a_repo_with_auto_merge_off_tells_anyone_else_and_sends_nothing`,
+`a_batch_arm_skips_a_repo_with_auto_merge_off_by_name`,
+`allowing_auto_merge_patches_the_repo_then_arms`,
+`a_refused_repo_setting_arms_nothing` and
+`a_refused_arm_takes_the_diamond_back_off_so_the_next_a_arms_again`.
+
+## ADR-027 — An update is followed until the forge has finished it
+
+`u` ended in an error line often enough to be reported. Both forges answer
+an update before they have done it: GitHub and GitLab each return 202 and
+rewrite the branch afterwards. pullpen took the 202 as done and synced
+once, at once. That read usually came first, the row went back to "behind",
+and a second `u` got the forge's refusal of an update already under way.
+The cause is read from the code and the forges' documented answers, not
+caught live: the maintainer's log held no failed update to check against.
+
+**An update syncs again, as a merge does.** ADR-025's syncs 5 and 20 seconds
+after acting now follow an update too.
+
+**A branch pullpen updated is not believed behind for 30 seconds.** A read
+that still says behind shows the row as checking. Any other answer is the
+forge having caught up, and ends the wait.
+
+**A second `u` sends nothing** while the first is in flight or the forge is
+still catching up, and says the PR is already being updated.
+
+**GitLab's rebase is asked whether it worked.** A rebase that hits a
+conflict is accepted with 202 and fails later, with the reason only in the
+MR's `merge_error`. pullpen now asks the MR, with
+`include_rebase_in_progress`, until the rebase has stopped, for up to 20
+seconds, and reports `merge_error` as the refusal it is. This is the
+polling GitLab's API documentation describes for the endpoint.
+
+**`u` says what the forge meant.** GitHub refuses an update that has
+nothing to bring in; that now reads "already up to date with its base", not
+as an error. The match is on GitHub's wording, "There are no new commits on the base
+branch.", as it answered an update of an up-to-date PR on 2026-11-21. `u` on a merged PR is
+refused without asking the forge. A rate-limited action says "try again",
+since nothing retries an action. An action that finishes after a sync
+dropped its row still reports. Proved by
+`an_update_with_nothing_to_bring_in_is_an_answer_not_an_error`,
+`u_on_a_merged_pr_is_refused_here` and
+`an_action_that_finishes_after_its_row_left_still_says_so`.
+
+**A failure caught live was neither.** After the above was written the
+maintainer's `u` failed with "error sending request", and the log showed a
+diff fetch failing 16 milliseconds apart from it. Two requests failing
+together is their shared connection dying, not GitHub refusing: asked
+directly a minute later, GitHub answered that update at once. pullpen keeps
+one connection per forge between syncs and nothing noticed when it had
+died. A sync retries, so it recovers unseen; an action does not, so `u`
+showed the error. The connection is now pinged while idle and dropped when
+the ping goes unanswered, an idle one is kept a minute, and a request that
+never reached the forge is sent once more. A request that may have reached
+it is not: a second merge would report a refusal of a merge that worked.
+The error line also carries the cause beneath reqwest's, which it used to
+drop. Which of a sleep, a NAT or the forge closed that connection is not
+known. Only the last part has a test,
+`a_network_failure_says_why_and_never_where`; the keep-alive settings are
+unverified until an idle session shows they hold.
+
+Proved by `merges_arms_and_closes_sync_again_while_the_forge_catches_up`,
+`an_updated_branch_is_not_believed_behind_until_the_forge_catches_up`,
+`a_second_u_while_the_first_is_under_way_sends_nothing`,
+`an_update_waits_for_the_rebase_to_finish` and
+`a_rebase_that_fails_after_it_was_accepted_is_a_refusal`.
+
+## ADR-028 — More of what the forge CLIs do, as commands and not keys
+
+The maintainer asked for more of what `gh` and `glab` can do, without
+losing how direct the list is. pullpen does not run those tools; it borrows
+their tokens and calls the forges itself (ADR-008). So this is new calls on
+the `Forge` trait, in four groups: a pipeline's failed jobs run again or
+its running ones stopped; a PR sent back, on to a reviewer, to draft or
+ready, or reopened; its labels, assignees and title changed; and a PR opened
+for the branch of the clone pullpen was started in.
+
+The counter-argument is the north star's own test: a feature that does not
+help answer "is this safe to merge, and what is it waiting for", or act on
+the answer, does not belong. Running a pipeline again and asking for a
+review pass it plainly. Labels, titles and opening a PR do not answer the
+question. They are what stands between the user and a queue cleared without
+a browser, which is the invariant, and the maintainer chose them. What the
+counter-argument does decide is where they live.
+
+**Commands first.** Every action here is a `:` command. None takes a key in
+the list, and the help overlay does not grow: the list's keys stay the ones
+a week of triage uses. A key is added later, by its own record, for a
+command that turns out to be used daily, as `u` was (ADR-015). A command on
+several marked PRs asks once.
+
+**Creating PRs is no longer ruled out.** The north star and PLAN §10 said
+so; both now say otherwise. Review comments on diff lines and managing
+branches stay out.
+
+## ADR-029 — The code cap rises to 11,500
+
+The fixes in ADR-026 and ADR-027 measured 142 lines and `:rerun` and
+`:cancel` 95, which took the code to 10,889 of ADR-021's 11,000. The three
+groups still to come in ADR-028 are of the same shape as that one, a core
+action, a call on each forge and a command, and there are about ten such
+actions.
+
+The cap rises to 11,500 lines. This record is written before those three
+groups are, so the figure is an estimate from one measured group, not a
+measurement of all four; the pull request that adds them states what they
+came to.

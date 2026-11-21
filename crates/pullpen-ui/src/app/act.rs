@@ -45,10 +45,22 @@ pub enum PromptKind {
     },
     /// `M` on a PR that is only waiting: offer auto-merge instead.
     ArmInstead,
+    /// `A` on a PR the forge would merge at once and so will not arm.
+    MergeNow {
+        method: MergeMethod,
+    },
+    /// `A` in a repo whose auto-merge setting is off, asked of its admin.
+    AllowAuto {
+        method: MergeMethod,
+    },
     Close,
     Approve,
     Comment(String),
     Update,
+    /// `:new`, which always asks: the PR is made of what the clone says.
+    New(Action),
+    /// Any other action on several PRs at once, which asks once.
+    Several(Action),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,20 +111,40 @@ fn method_of(c: char) -> Option<MergeMethod> {
     ORDER.into_iter().find(|m| key_of(*m) == c)
 }
 
+/// How GitHub's refusal of an update with nothing to bring in reads.
+const UP_TO_DATE: &str = "no new commits on the base branch";
+
 /// What the progress line says while a job runs: "Merging #812 on …".
 pub fn verb(a: &Action) -> &'static str {
     match a {
         Action::Merge { .. } => "Merging",
-        Action::Arm { .. } => "Arming auto-merge on",
+        Action::Arm { .. } | Action::AllowAuto { .. } => "Arming auto-merge on",
         Action::Disarm => "Disarming auto-merge on",
         Action::Approve => "Approving",
         Action::Comment(_) => "Commenting on",
         Action::Close => "Closing",
         Action::Update => "Updating",
+        Action::Rerun => "Re-running failed jobs of",
+        Action::Create { .. } => "Opening a PR in",
+        Action::Label { .. } => "Labelling",
+        Action::Assign(_) => "Assigning",
+        Action::Title(_) => "Retitling",
+        Action::Ready(true) => "Marking ready",
+        Action::Ready(false) => "Putting back to draft",
+        Action::Reopen => "Reopening",
+        Action::RequestChanges(_) => "Requesting changes on",
+        Action::Review(_) => "Requesting a review of",
+        Action::Cancel => "Cancelling the pipeline of",
         Action::Checkout { .. } => "Checking out",
         Action::Open => "Opening",
         Action::Refresh { .. } => "Refreshing",
     }
+}
+
+/// What a job's target is called: its number, or its repo for a PR that
+/// does not exist yet.
+pub fn name(id: &PrId) -> String {
+    if id.number == 0 { id.repo.clone() } else { format!("#{}", id.number) }
 }
 
 fn plural(n: usize, one: &str) -> String {
@@ -248,9 +280,45 @@ impl App {
 
     fn default_method(&self, p: &Pr) -> MergeMethod {
         match self.ui.default_method {
-            DefaultMethod::Fixed(m) => m,
-            DefaultMethod::Repo => p.repo_default_method,
+            // A configured method is a preference across repos: one that
+            // does not allow it gets its own default, not a refusal.
+            DefaultMethod::Fixed(m) if p.repo_allowed_methods.is_empty() || p.repo_allowed_methods.contains(&m) => m,
+            _ => p.repo_default_method,
         }
+    }
+
+    /// Says so, and returns true, when a method named on the command line is
+    /// one the repo does not allow.
+    fn disallowed(&mut self, p: &Pr, method: Option<MergeMethod>, mode: Mode) -> bool {
+        let Some(m) = method.filter(|m| !p.repo_allowed_methods.is_empty() && !p.repo_allowed_methods.contains(m))
+        else {
+            return false;
+        };
+        let allowed: Vec<&str> = p.repo_allowed_methods.iter().map(|m| m.word()).collect();
+        let line = markup(&format!(
+            "{{r|E  {} doesn't allow {}}}{{d|      it allows {}}}",
+            esc(&p.id.repo),
+            m.word(),
+            allowed.join(", ")
+        ));
+        self.say(line, mode);
+        true
+    }
+
+    /// Says so, and returns true, when the PR waits on nothing but being
+    /// behind its base: auto-merge would wait on an update nobody asked
+    /// for, so name the key that makes one.
+    fn only_behind(&mut self, p: &Pr, mode: Mode) -> bool {
+        let behind = matches!(verdict(p, &self.caps_of(p)), Verdict::Waiting(w) if w.iter().all(|x| matches!(x, Wait::Behind { .. })));
+        if behind {
+            let line = markup(&format!(
+                "{{r|E  #{} is behind {}}}{{d|      u updates the branch}}",
+                p.id.number,
+                esc(&p.base)
+            ));
+            self.say(line, mode);
+        }
+        behind
     }
 
     fn allowed(&self, ids: &[PrId]) -> Vec<MergeMethod> {
@@ -272,28 +340,22 @@ impl App {
         typed: Option<String>,
     ) {
         let Some(first) = ids.first().and_then(|id| self.find(id)).cloned() else { return };
+        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
+        if self.disallowed(&first, method, mode) {
+            return;
+        }
         let method = method.unwrap_or_else(|| self.default_method(&first));
         if ids.len() > 1 {
             let allowed = self.allowed(&ids);
             return self.ask(PromptKind::Merge { method, allowed }, ids, origin, typed);
         }
-        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
         match verdict(&first, &self.caps_of(&first)) {
             _ if first.merged() => self.error(&format!("#{} is already merged", first.id.number), mode),
             Verdict::Ready => {
                 let allowed = first.repo_allowed_methods.clone();
                 self.ask(PromptKind::Merge { method, allowed }, ids, origin, typed)
             }
-            // Behind its base and nothing else: auto-merge would wait on an
-            // update nobody asked for, so say which key makes one.
-            Verdict::Waiting(w) if w.iter().all(|x| matches!(x, Wait::Behind { .. })) => {
-                let line = markup(&format!(
-                    "{{r|E  #{} is behind {}}}{{d|      u updates the branch}}",
-                    first.id.number,
-                    esc(&first.base)
-                ));
-                self.say(line, mode);
-            }
+            _ if self.only_behind(&first, mode) => {}
             Verdict::Waiting(_) => self.ask(PromptKind::ArmInstead, ids, origin, typed),
             Verdict::Blocked(_) => {
                 let (why, hint) = blockers(&first);
@@ -317,13 +379,16 @@ impl App {
         typed: Option<String>,
     ) -> Vec<Effect> {
         let Some(first) = ids.first().and_then(|id| self.find(id)).cloned() else { return vec![] };
+        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
+        if self.disallowed(&first, method, mode) {
+            return vec![];
+        }
         if ids.len() > 1 {
             let method = method.unwrap_or_else(|| self.default_method(&first));
             let allowed = self.allowed(&ids);
             self.ask(PromptKind::Arm { method, allowed }, ids, origin, typed);
             return vec![];
         }
-        let mode = if origin == Origin::Command { Mode::Command } else { Mode::Normal };
         if let Some(a) = &first.auto_merge
             && method.is_none_or(|m| m == a.method)
         {
@@ -342,8 +407,31 @@ impl App {
                 let m = method.unwrap_or_else(|| self.default_method(&first));
                 self.start(vec![(first.id.clone(), Action::Merge { method: m }, true)], None, origin, typed)
             }
+            _ if self.only_behind(&first, mode) => vec![],
+            _ if first.mergeable_now => {
+                let method = method.unwrap_or_else(|| self.default_method(&first));
+                self.ask(PromptKind::MergeNow { method }, ids, origin, typed);
+                vec![]
+            }
+            // The forge refuses every arm in such a repo, so nothing is sent
+            // that cannot work; an admin is offered the setting instead.
+            _ if self.caps_of(&first).auto_merge_off => {
+                if self.caps_of(&first).can_admin {
+                    let method = method.unwrap_or_else(|| self.default_method(&first));
+                    self.ask(PromptKind::AllowAuto { method }, ids, origin, typed);
+                } else {
+                    let line = markup(&format!(
+                        "{{r|E  #{} can't arm: {} has auto-merge off}}{{d|      a repo admin allows it in the repo's settings}}",
+                        first.id.number,
+                        esc(&first.id.repo)
+                    ));
+                    self.say(line, mode);
+                }
+                vec![]
+            }
             _ => match (method, self.ui.default_method) {
-                (Some(m), _) | (None, DefaultMethod::Fixed(m)) => {
+                (Some(_), _) | (None, DefaultMethod::Fixed(_)) => {
+                    let m = method.unwrap_or_else(|| self.default_method(&first));
                     self.start(vec![(first.id.clone(), Action::Arm { method: m }, false)], None, origin, typed)
                 }
                 (None, DefaultMethod::Repo) if first.repo_allowed_methods.len() > 1 => {
@@ -369,11 +457,27 @@ impl App {
         origin: Origin,
         typed: Option<String>,
     ) -> Vec<Effect> {
+        // A second update while the first is under way is refused by the
+        // forge, and its refusal would replace the first one's answer.
+        if let ([id], Action::Update) = (&ids[..], &action)
+            && (self.updating.contains_key(id)
+                || self.jobs.iter().any(|j| j.job.target == *id && j.job.action == Action::Update))
+        {
+            self.say(markup(&format!("{{d|#{} is already being updated}}", id.number)), Mode::Normal);
+            return vec![];
+        }
+        if let ([id], Action::Update) = (&ids[..], &action)
+            && self.find(id).is_some_and(|p| p.merged())
+        {
+            self.error(&format!("#{} is already merged", id.number), Mode::Normal);
+            return vec![];
+        }
         let kind = match &action {
             Action::Close => Some(PromptKind::Close),
             Action::Update if ids.len() > 1 => Some(PromptKind::Update),
             Action::Approve if ids.len() > 1 => Some(PromptKind::Approve),
             Action::Comment(t) if ids.len() > 1 => Some(PromptKind::Comment(t.clone())),
+            a if ids.len() > 1 => Some(PromptKind::Several(a.clone())),
             _ => None,
         };
         match kind {
@@ -417,10 +521,20 @@ impl App {
                 let m = pick(c, allowed).unwrap_or(MergeMethod::Squash);
                 self.start(vec![(ids[0].clone(), Action::Arm { method: m }, false)], None, origin, typed)
             }
+            (PromptKind::MergeNow { method }, Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), Action::Merge { method: *method }, false)], None, origin, typed)
+            }
+            (PromptKind::AllowAuto { method }, Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), Action::AllowAuto { method: *method }, false)], None, origin, typed)
+            }
             (PromptKind::ArmInstead, Key::Char('y' | 'A')) => self.request_arm(ids, None, origin, typed),
             (PromptKind::Close, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Close, origin, typed),
             (PromptKind::Update, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Update, origin, typed),
             (PromptKind::Approve, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Approve, origin, typed),
+            (PromptKind::Several(a), Key::Char('y') | Key::Enter) => self.run_batch(ids, a.clone(), origin, typed),
+            (PromptKind::New(a), Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), a.clone(), false)], None, origin, typed)
+            }
             (PromptKind::Comment(t), Key::Char('y') | Key::Enter) => {
                 let t = t.clone();
                 self.run_batch(ids, Action::Comment(t), origin, typed)
@@ -446,6 +560,15 @@ impl App {
                 }
                 Action::Arm { method } if r == Readiness::Ready => {
                     jobs.push((p.id.clone(), Action::Merge { method: *method }, true))
+                }
+                // Arming it would be refused, and merging a row that is not
+                // green is not what a batch arm was asked for.
+                Action::Arm { .. } if p.mergeable_now => {
+                    skipped.push((p.id.number, "can merge now: A on its own".into()))
+                }
+                // A batch never changes a repo's settings.
+                Action::Arm { .. } if self.caps_of(&p).auto_merge_off => {
+                    skipped.push((p.id.number, "repo has auto-merge off".into()))
                 }
                 Action::Arm { method } if p.auto_merge.as_ref().is_some_and(|a| a.method == *method) => {
                     skipped.push((p.id.number, "already armed".into()))
@@ -489,11 +612,14 @@ impl App {
             if merging_now && let Some(b) = batch {
                 self.batches[b].merging_now.push(job.target.number);
             }
+            // Read before the optimistic ◆ goes on: this is what a refusal
+            // puts back.
+            let before = self.find(&job.target).map(|p| p.auto_merge.clone());
             self.optimistic(&job, merging_now);
+            let run = Running { job: job.clone(), batch, origin, typed: typed.clone(), merging_now, before };
+            self.jobs.push(run);
             if !queued {
-                effects.push(self.launch(job, batch, origin, typed.clone(), merging_now));
-            } else {
-                self.jobs.push(Running { job, batch, origin, typed: typed.clone(), merging_now, before: None });
+                effects.push(Effect::Run(job));
             }
         }
         if let Some(b) = batch {
@@ -502,26 +628,14 @@ impl App {
         effects
     }
 
-    fn launch(
-        &mut self,
-        job: Job,
-        batch: Option<usize>,
-        origin: Origin,
-        typed: Option<String>,
-        merging_now: bool,
-    ) -> Effect {
-        let before = self.find(&job.target).map(|p| p.auto_merge.clone());
-        self.jobs.retain(|r| r.job.id != job.id);
-        self.jobs.push(Running { job: job.clone(), batch, origin, typed, merging_now, before });
-        Effect::Run(job)
-    }
-
     /// Arming shows ◆ at once; the forge's answer confirms or reverts it.
     fn optimistic(&mut self, job: &Job, merging_now: bool) {
         let me = self.me.clone();
         let now = self.now;
         let am = match &job.action {
-            Action::Arm { method } => Some(AutoMerge { method: *method, armed_by: me, armed_at: now }),
+            Action::Arm { method } | Action::AllowAuto { method } => {
+                Some(AutoMerge { method: *method, armed_by: me, armed_at: now })
+            }
             Action::Merge { method } if merging_now => Some(AutoMerge { method: *method, armed_by: me, armed_at: now }),
             _ => return,
         };
@@ -591,8 +705,13 @@ impl App {
                 }
                 match run.batch.filter(|_| !run.merging_now) {
                     Some(b) => self.batches[b].failed.push((n, reason.clone())),
+                    // GitHub refuses an update with nothing to bring in.
+                    // That is an answer to `u`, not a failure of it.
+                    None if run.job.action == Action::Update && reason.contains(UP_TO_DATE) => {
+                        self.say(markup(&format!("{{d|#{n} is already up to date with its base}}")), Mode::Normal);
+                    }
                     None => {
-                        let text = format!(":{} #{n}: {reason}", run.job.action.command());
+                        let text = format!(":{} {}: {reason}", run.job.action.command(), name(&id));
                         let to_line = run.origin == Origin::Command && matches!(self.input, Input::Normal);
                         if to_line {
                             self.input =
@@ -608,7 +727,7 @@ impl App {
             self.batches[b].running = self.batches[b].running.saturating_sub(1);
             if let Some(next) = self.batches[b].queue.pop_front() {
                 self.batches[b].running += 1;
-                effects.push(self.launch(next, Some(b), run.origin, run.typed.clone(), false));
+                effects.push(Effect::Run(next));
             }
             self.report_batch(b);
         }
@@ -618,15 +737,24 @@ impl App {
     /// Applies a finished job to the rows, and says so.
     fn apply_done(&mut self, run: &Running, note: Option<&str>) -> Option<Line> {
         let id = &run.job.target;
-        let p = self.find(id).cloned()?;
         let n = id.number;
+        if let Action::Create { .. } = run.job.action {
+            return Some(markup(&format!("{{g|✓}} {{f|Opened {}}}", esc(note.unwrap_or_default()))));
+        }
+        // A sync can drop the row while its action runs. The action still
+        // happened, and saying nothing reads as though it had not.
+        let Some(p) = self.find(id).cloned() else {
+            let cmd = run.job.action.command();
+            let local = matches!(run.job.action, Action::Open | Action::Refresh { .. });
+            return (!local).then(|| markup(&format!("{{g|✓}} {{f|:{cmd} #{n} done}}{{d|   it has left this list}}")));
+        };
         Some(match &run.job.action {
             Action::Merge { method } => {
                 self.remove_pr(id);
                 let note = note.map_or(String::new(), |n| format!(" · {}", esc(n)));
                 markup(&format!("{{g|✓}} {{f|Merged #{n} into {}}}{{d|   {}{note}}}", esc(&p.base), method.word()))
             }
-            Action::Arm { method } => {
+            Action::Arm { method } | Action::AllowAuto { method } => {
                 let wait = match verdict(&p, &self.caps_of(&p)) {
                     Verdict::Waiting(w) => format!("waiting on {}", waiting_on(&w)),
                     Verdict::Blocked(Block::Failing { check }) => format!("merges once {check} passes"),
@@ -659,17 +787,46 @@ impl App {
                 // The forge rewrites the branch; until the next sync says how
                 // it stands, its mergeability is not known.
                 self.each_pr(id, |p| p.mergeable = pullpen_core::Mergeable::Unknown);
+                self.updating.insert(id.clone(), self.now);
                 let how = match id.forge {
                     pullpen_core::Forge::GitHub => format!("merged {} into it", esc(&p.base)),
                     pullpen_core::Forge::GitLab => format!("rebased onto {}", esc(&p.base)),
                 };
                 markup(&format!("{{g|✓}} {{f|Updated #{n}}}{{d|   {how}}}"))
             }
+            Action::Ready(ready) => {
+                self.each_pr(id, |p| p.draft = !ready);
+                let now = if *ready { "ready for review" } else { "a draft again" };
+                markup(&format!("{{g|✓}} {{f|#{n} is {now}}}"))
+            }
+            Action::Reopen => markup(&format!("{{g|✓}} {{f|Reopened #{n}}}")),
+            Action::RequestChanges(_) => markup(&format!("{{g|✓}} {{f|Requested changes on #{n}}}")),
+            Action::Review(who) => {
+                let who: Vec<String> = who.iter().map(|w| format!("@{w}")).collect();
+                markup(&format!("{{g|✓}} {{f|Asked for a review of #{n}}}{{d|   {}}}", esc(&who.join(" "))))
+            }
+            Action::Label { .. } => {
+                markup(&format!("{{g|✓}} {{f|Labelled #{n}}}{{d|   {}}}", esc(note.unwrap_or_default())))
+            }
+            Action::Assign(who) => {
+                let who: Vec<String> = who.iter().map(|w| format!("@{w}")).collect();
+                markup(&format!("{{g|✓}} {{f|Assigned #{n}}}{{d|   {}}}", esc(&who.join(" "))))
+            }
+            Action::Title(title) => {
+                self.each_pr(id, |p| p.title = title.clone());
+                markup(&format!("{{g|✓}} {{f|Retitled #{n}}}"))
+            }
+            Action::Rerun | Action::Cancel => {
+                let did = if run.job.action == Action::Rerun { "Re-ran" } else { "Cancelled" };
+                // The pipeline screen stops asking once every run is done.
+                self.poll.runs_asked = None;
+                markup(&format!("{{g|✓}} {{f|{did} #{n}}}{{d|   {}}}", esc(note.unwrap_or_default())))
+            }
             Action::Checkout { branch } => {
                 let wher = note.map_or(String::new(), |n| format!(" {}", esc(n)));
                 markup(&format!("{{g|✓}} {{f|Checked out #{n}}}{{d|   {}{wher}}}", esc(branch)))
             }
-            Action::Open | Action::Refresh { .. } => return None,
+            Action::Open | Action::Refresh { .. } | Action::Create { .. } => return None,
         })
     }
 
@@ -745,6 +902,15 @@ impl App {
                     esc(&why)
                 )
             }
+            PromptKind::MergeNow { method } => format!(
+                "{{f|{what} can merge as it is, so there is nothing to arm. Merge with }}{{yB|{}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                method.word()
+            ),
+            PromptKind::AllowAuto { method } => format!(
+                "{{f|{} has auto-merge off. Turn it on and arm }}{{B|{what}}}{{f| with }}{{yB|{}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                pr.map_or(String::new(), |p| esc(&p.id.repo)),
+                method.word()
+            ),
             PromptKind::Close => {
                 format!("{{f|Close }}{{B|{what}}}{{f| without merging?}}   {{d|y/Enter yes   n/Esc cancel}}")
             }
@@ -752,11 +918,32 @@ impl App {
             PromptKind::Update => {
                 format!("{{f|Bring }}{{B|{what}}}{{f| up to date with their base?}}   {{d|y/Enter yes   n/Esc cancel}}")
             }
+            PromptKind::New(Action::Create { head, base, title, .. }) => format!(
+                "{{f|Open a PR in {}: }}{{B|{}}}{{f| → {}, “{}”?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                esc(&p.targets[0].repo),
+                esc(head),
+                esc(base.as_deref().unwrap_or("its default branch")),
+                esc(title)
+            ),
+            PromptKind::New(_) => String::new(),
+            PromptKind::Several(a) => {
+                format!("{{f|:{} on }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}", a.command())
+            }
             PromptKind::Comment(_) => {
                 format!("{{f|Comment on }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}")
             }
         };
         markup(&text)
+    }
+
+    /// `:new`, once the clone has been read: asks before anything is opened.
+    /// The forge is the one a listed PR on that host has, else the host's
+    /// name decides.
+    pub fn request_new(&mut self, host: &str, repo: &str, action: Action) {
+        let listed = self.sections.iter().flat_map(|s| &s.prs).find(|p| p.id.host == host).map(|p| p.id.forge);
+        let gitlab = if host.contains("gitlab") { pullpen_core::Forge::GitLab } else { pullpen_core::Forge::GitHub };
+        let id = PrId { forge: listed.unwrap_or(gitlab), host: host.into(), repo: repo.into(), number: 0 };
+        self.ask(PromptKind::New(action), vec![id], Origin::Command, None);
     }
 
     /// The text back from $EDITOR for a bare `c`.

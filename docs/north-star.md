@@ -29,6 +29,9 @@ belong here.
 - Acting from the keyboard: merge, arm, disarm, approve, comment, close,
   checkout, singly or in batches, each confirmed on the command line when it
   cannot be undone.
+- The rest of what clearing a queue takes, as commands rather than keys
+  (ADR-028): running a failed pipeline again, sending a PR back or on to a
+  reviewer, relabelling it, and opening one for the branch you are on.
 - Coming back to a clean list. The armed view groups by outcome, and a
   transition that needs you rings the bell.
 - Degrading honestly. Sixteen colours and ASCII glyphs carry the same
@@ -37,9 +40,9 @@ belong here.
 
 ## What that rules out
 
-- Writing code review comments on diff lines, creating PRs, or managing
-  branches beyond checking one out. The forge's web UI does those well, and
-  `o` is one key away.
+- Writing code review comments on diff lines, or managing branches beyond
+  checking one out. The forge's web UI does those well, and `o` is one key
+  away.
 - Storing credentials (ADR-006), and any settings or onboarding UI. The
   config file is the interface.
 - Forges beyond GitHub and GitLab in v1. The `Forge` trait stays clean so

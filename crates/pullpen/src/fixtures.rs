@@ -62,6 +62,7 @@ impl Backend for Fake {
             let note = match &job.action {
                 Action::Merge { .. } => Some("source branch deleted".to_string()),
                 Action::Checkout { .. } => Some("(fixtures: nothing fetched)".to_string()),
+                Action::Create { .. } => Some("(fixtures: nothing opened)".to_string()),
                 _ => None,
             };
             let _ = tx.send(Msg::Job(JobResult { job, outcome, note }));

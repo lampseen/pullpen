@@ -454,3 +454,257 @@ async fn a_refused_merge_reads_the_branchs_rules_again() {
     g.search(&q, "me", 50).await.unwrap();
     assert!(fresh(std::time::Duration::from_secs(599)) && !fresh(RULES_FOR));
 }
+
+#[test]
+fn a_repo_with_auto_merge_off_says_so_and_who_may_turn_it_on() {
+    let g = GitHub::with_api("github.com", "http://x", "t".into(), Agents::default(), "", false);
+    let mut n = node();
+    g.to_pr(&n, &Rules::default());
+    let caps = g.capabilities()["github.com/o/r"].clone();
+    assert!(!caps.auto_merge_off && !caps.can_admin, "an answer without the fields reads as nothing known");
+    n["repository"]["autoMergeAllowed"] = json!(false);
+    n["repository"]["viewerCanAdminister"] = json!(true);
+    g.to_pr(&n, &Rules::default());
+    let caps = g.capabilities()["github.com/o/r"].clone();
+    assert!(caps.auto_merge_off && caps.can_admin);
+}
+
+#[tokio::test]
+async fn allowing_auto_merge_patches_the_repo_then_arms() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/o/r"))
+        .and(body_partial_json(json!({ "allow_auto_merge": true })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("pullRequest(number"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "repository": { "pullRequest": { "id": "PR_n7" } } } })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("enablePullRequestAutoMerge"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "data": { "enablePullRequestAutoMerge": { "clientMutationId": null } } })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let job = Job { id: 1, target: id(), action: Action::AllowAuto { method: MergeMethod::Squash } };
+    crate::run(&g, &job).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_refused_repo_setting_arms_nothing() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/o/r"))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(json!({ "message": "Must have admin rights to Repository." })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+    let g = gh(&server);
+    let job = Job { id: 1, target: id(), action: Action::AllowAuto { method: MergeMethod::Squash } };
+    let e = crate::run(&g, &job).await.unwrap_err();
+    assert_eq!(e, Error::Refused("Must have admin rights to Repository.".into()));
+}
+
+#[test]
+fn what_github_would_merge_at_once_is_marked_so_it_is_never_armed() {
+    let g = GitHub::with_api("github.com", "http://x", "t".into(), Agents::default(), "", false);
+    let mut n = node();
+    for (status, now) in
+        [("CLEAN", true), ("UNSTABLE", true), ("HAS_HOOKS", true), ("BLOCKED", false), ("BEHIND", false)]
+    {
+        n["mergeStateStatus"] = json!(status);
+        assert_eq!(g.to_pr(&n, &Rules::default()).mergeable_now, now, "{status}");
+    }
+}
+
+fn job_at(url: &str, state: CheckState) -> JobRun {
+    JobRun {
+        id: "1".into(),
+        name: "test".into(),
+        group: "ci".into(),
+        state,
+        started: None,
+        finished: None,
+        steps: vec![],
+        url: url.into(),
+        log: true,
+    }
+}
+
+#[tokio::test]
+async fn a_rerun_asks_each_workflow_run_once_for_its_failed_jobs() {
+    let server = MockServer::start().await;
+    for run in ["1", "2"] {
+        Mock::given(method("POST"))
+            .and(path(format!("/repos/o/r/actions/runs/{run}/rerun-failed-jobs")))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let jobs: Vec<JobRun> = ["runs/1/job/121", "runs/1/job/122", "runs/2/job/9"]
+        .map(|u| job_at(&format!("https://github.com/o/r/actions/{u}"), CheckState::Failed))
+        .to_vec();
+    gh(&server).rerun(&id(), &jobs).await.unwrap();
+    let e = gh(&server).rerun(&id(), &[job_at("https://circleci.com/x", CheckState::Failed)]).await.unwrap_err();
+    assert_eq!(e, Error::Refused("these checks are not GitHub Actions jobs".into()));
+}
+
+#[tokio::test]
+async fn cancel_stops_the_run_of_a_job_still_going_and_rerun_finds_nothing_failed() {
+    let server = MockServer::start().await;
+    let check = json!({
+        "databaseId": 121, "name": "test", "status": "IN_PROGRESS", "conclusion": null,
+        "startedAt": "2026-10-01T00:00:00Z", "completedAt": null,
+        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/121", "steps": { "nodes": [] }
+    });
+    let head = json!({ "oid": "9c01e7a2ff", "status": null, "checkSuites": { "nodes": [ {
+        "app": { "name": "GitHub Actions" }, "workflowRun": { "event": "pull_request", "workflow": { "name": "ci" } },
+        "checkRuns": { "nodes": [ check ] }
+    } ] } });
+    Mock::given(method("POST"))
+        .and(body_string_contains("fragment run on Commit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "repository": { "pullRequest": {
+            "url": "https://github.com/o/r/pull/7", "commits": { "nodes": [ { "commit": head } ] }, "mergeCommit": null
+        } } } })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/o/r/actions/runs/1/cancel"))
+        .respond_with(ResponseTemplate::new(202))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let note = crate::run(&g, &Job { id: 1, target: id(), action: Action::Cancel }).await.unwrap();
+    assert_eq!(note.as_deref(), Some("test"), "one job is named");
+    let e = crate::run(&g, &Job { id: 2, target: id(), action: Action::Rerun }).await.unwrap_err();
+    assert_eq!(e, Error::Refused("no failed jobs to run again".into()));
+}
+
+#[tokio::test]
+async fn review_workflow_writes_hit_their_endpoints() {
+    let server = MockServer::start().await;
+    let ok = || ResponseTemplate::new(200).set_body_json(json!({}));
+    let rest = [
+        ("PATCH", "/repos/o/r/pulls/7", json!({ "state": "open" })),
+        ("POST", "/repos/o/r/pulls/7/reviews", json!({ "event": "REQUEST_CHANGES", "body": "rename it" })),
+        ("POST", "/repos/o/r/pulls/7/requested_reviewers", json!({ "reviewers": ["mara", "jkoh"] })),
+    ];
+    for (verb, at, body) in rest {
+        Mock::given(method(verb))
+            .and(path(at))
+            .and(body_partial_json(body))
+            .respond_with(ok())
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(body_string_contains("pullRequest(number"))
+        .respond_with(ok().set_body_json(json!({ "data": { "repository": { "pullRequest": { "id": "PR_n7" } } } })))
+        .mount(&server)
+        .await;
+    for name in ["markPullRequestReadyForReview", "convertPullRequestToDraft"] {
+        Mock::given(method("POST"))
+            .and(body_string_contains(name))
+            .and(body_partial_json(json!({ "variables": { "id": "PR_n7" } })))
+            .respond_with(ok().set_body_json(json!({ "data": { name: { "clientMutationId": null } } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    g.reopen(&id()).await.unwrap();
+    g.request_changes(&id(), "rename it").await.unwrap();
+    g.request_review(&id(), &["mara".to_string(), "jkoh".to_string()]).await.unwrap();
+    g.ready(&id(), true).await.unwrap();
+    g.ready(&id(), false).await.unwrap();
+}
+
+#[tokio::test]
+async fn labels_are_removed_then_added_and_the_last_answer_is_what_is_left() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/repos/o/r/issues/7/labels/needs%20review"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "name": "bug" }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/o/r/issues/7/labels"))
+        .and(body_partial_json(json!({ "labels": ["infra"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "name": "bug" }, { "name": "infra" }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let g = gh(&server);
+    let action = Action::Label { add: vec!["infra".into()], remove: vec!["needs review".into()] };
+    let note = crate::run(&g, &Job { id: 1, target: id(), action }).await.unwrap();
+    assert_eq!(note.as_deref(), Some("now bug, infra"));
+}
+
+#[tokio::test]
+async fn assigning_and_retitling_hit_their_endpoints() {
+    let server = MockServer::start().await;
+    let writes = [
+        ("POST", "/repos/o/r/issues/7/assignees", json!({ "assignees": ["mara"] })),
+        ("PATCH", "/repos/o/r/pulls/7", json!({ "title": "Bump deps, again" })),
+    ];
+    for (verb, at, body) in writes {
+        let ok = ResponseTemplate::new(200).set_body_json(json!({}));
+        Mock::given(method(verb))
+            .and(path(at))
+            .and(body_partial_json(body))
+            .respond_with(ok)
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    g.assign(&id(), &["mara".to_string()]).await.unwrap();
+    g.retitle(&id(), "Bump deps, again").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_new_pr_goes_to_the_repos_default_branch_unless_told() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "trunk" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for base in ["trunk", "release"] {
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/pulls"))
+            .and(body_partial_json(json!({ "title": "Retry", "head": "feat/retry", "base": base, "body": "why" })))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(json!({ "html_url": format!("https://github.com/o/r/pull/8?{base}") })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    assert_eq!(
+        g.create("o/r", "feat/retry", None, "Retry", "why").await.unwrap(),
+        "https://github.com/o/r/pull/8?trunk"
+    );
+    let url = g.create("o/r", "feat/retry", Some("release"), "Retry", "why").await.unwrap();
+    assert_eq!(url, "https://github.com/o/r/pull/8?release");
+}

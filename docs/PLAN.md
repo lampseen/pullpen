@@ -501,7 +501,7 @@ query = "is:open"
 
 ## 10. Out of scope for v1
 
-Settings UI, onboarding/auth screens, inline review comments on diff lines, creating PRs, Bitbucket/Gitea (keep the `Forge` trait clean so they can come later), row treatments 1b/1c. (Windows was here; ADR-016 brought it in.)
+Settings UI, onboarding/auth screens, inline review comments on diff lines, Bitbucket/Gitea (keep the `Forge` trait clean so they can come later), row treatments 1b/1c. (Windows was here; ADR-016 brought it in. Creating PRs was here; ADR-028 brought it in.)
 
 ---
 

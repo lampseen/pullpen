@@ -108,6 +108,7 @@ fn merges_arms_and_closes_sync_again_while_the_forge_catches_up() {
     use pullpen_core::MergeMethod;
     assert_eq!(settle(&Action::Merge { method: MergeMethod::Squash }), SETTLE);
     assert_eq!(settle(&Action::Arm { method: MergeMethod::Squash }), SETTLE);
+    assert_eq!(settle(&Action::Update), SETTLE, "the forge rewrites the branch after it has answered");
     assert!(settle(&Action::Approve).is_empty(), "an approval changes nothing a read can lag on");
 }
 

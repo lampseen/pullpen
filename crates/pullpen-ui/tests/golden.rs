@@ -396,6 +396,25 @@ fn arm_picks_a_method_then_disarm_toggles() {
 }
 
 #[test]
+fn arm_in_a_repo_with_auto_merge_off_offers_to_turn_it_on() {
+    let mut a = app();
+    select(&mut a, 3);
+    let caps = pullpen_core::Capabilities { auto_merge_off: true, can_admin: true, ..Default::default() };
+    a.caps.insert("github.com/acme/infra".into(), caps);
+    keys(&mut a, &[Key::Char('A')]);
+    strip_check("mergeFlow-8", &a, 4, Some(""));
+}
+
+#[test]
+fn arm_on_a_pr_the_forge_would_merge_at_once_offers_the_merge() {
+    let mut a = app();
+    select(&mut a, 3);
+    a.section_mut().prs[3].mergeable_now = true;
+    keys(&mut a, &[Key::Char('A')]);
+    strip_check("mergeFlow-9", &a, 4, Some(""));
+}
+
+#[test]
 fn batch_arm() {
     let mut a = app();
     for i in [1, 3, 9, 11, 12] {

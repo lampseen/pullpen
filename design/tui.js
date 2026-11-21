@@ -498,6 +498,10 @@ function build(mode){
    lines:strip({prs:[P[0],P[1],P[2],A(377,{armed:1})],sel:3,st:{armed:8},cmd:M('{a|◆} {f|Armed #377}{d|   squash · waiting on CI (4/9) and 1 review from @acme/infra}')})},
   {k:'A · on armed PR',cap:'Disarm',note:'A toggles. Disarming is not destructive, so it does not ask.',
    lines:strip({prs:R4,sel:3,cmd:M('{f|Auto-merge off for #377}{d|   A to re-arm}')})},
+  {k:'A · repo has auto-merge off',cap:'Offer to turn it on',note:'Only for someone who administers the repo. Anyone else is told the setting is off, and nothing is sent.',
+   lines:strip({prs:R4,sel:3,st:{mode:'CONFIRM',modeK:'warn'},cmd:M('{f|acme/infra has auto-merge off. Turn it on and arm }{B|#377}{f| with }{yB|squash}{f|?}   {d|y/Enter yes   n/Esc cancel}')})},
+  {k:'A · nothing left to wait for',cap:'Offer to merge instead',note:'The forge would merge this PR as it stands and refuses to arm it, though a check that is not required may still be running. A asks before merging, because the row is not green.',
+   lines:strip({prs:R4,sel:3,st:{mode:'CONFIRM',modeK:'warn'},cmd:M('{f|#377 can merge as it is, so there is nothing to arm. Merge with }{yB|squash}{f|?}   {d|y/Enter yes   n/Esc cancel}')})},
  ];
  const MK=[812,377,143,1203,375], R13=P.slice(0,13);
  out.batch=[
@@ -512,7 +516,7 @@ function build(mode){
   {k:'typing',cap:'Typing',note:'Target resolves live on the right. Without a target the command acts on the selected row.',
    lines:strip({prs:R5,sel:1,st:CM,cmd:lr(M(':comment #812 rebased on main, merging after the 2.4 cut{C| }'),M('{d|→ platform/runner #812}  '),120)})},
   {k:':a then Tab',cap:'Completing a command',note:'Wildmenu opens upward over the list. Tab / S-Tab cycle and fill the line; typing narrows.',
-   lines:strip({prs:R5,sel:1,st:CM,menuW:56,menu:[withBg(fit(M(' {B|approve}       {d|approve the PR}'),56),'sel'),M(' automerge     {d|arm or disarm auto-merge}')],cmd:M(':approve{C| }')})},
+   lines:strip({prs:R5,sel:1,st:CM,menuW:56,menu:[withBg(fit(M(' {B|approve}       {d|approve the PR}'),56),'sel'),M(' automerge     {d|arm or disarm auto-merge}'),M(' assign        {d|assign people, or yourself}')],cmd:M(':approve{C| }')})},
   {k:':merge #48 then Tab',cap:'Completing a target',note:'Targets complete from the current section with state glyph and title, so you pick the right #.',
    lines:strip({prs:R5,sel:1,st:CM,menu:[menuPR(P[0],true,84),menuPR(P[5],false,84),menuPR(P[10],false,84),menuPR(P[16],false,84)],menuW:84,cmd:M(':merge #4821{C| }')})},
   {k:'confirming',cap:'Confirming',note:'Mode block turns yellow. One key answers; anything other than y / Enter / a method key cancels.',

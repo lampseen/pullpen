@@ -19,7 +19,7 @@ use crossterm::event::{
 use crossterm::style::Print;
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate, SetTitle, supports_keyboard_enhancement};
 use crossterm::{execute, queue};
-use pullpen_core::PrId;
+use pullpen_core::{Action, PrId};
 use pullpen_ui::app::{App, Effect, Mouse};
 use pullpen_ui::views::chrome::Mode;
 use ratatui::DefaultTerminal;
@@ -213,6 +213,16 @@ fn run_effect(e: Effect, terminal: &mut DefaultTerminal, term: &mut Term, l: &mu
                     }
                 }
                 Err(err) => l.app.error(&format!("{err:#}"), Mode::Normal),
+            }
+        }
+        Effect::New { base } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::checkout::here(&cwd) {
+                Ok(h) => {
+                    let action = Action::Create { head: h.head, base, title: h.title, body: h.body };
+                    l.app.request_new(&h.host, &h.repo, action);
+                }
+                Err(why) => l.app.error(&format!("new: {why}"), Mode::Normal),
             }
         }
         Effect::Open(url) => {

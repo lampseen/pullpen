@@ -10,7 +10,7 @@ use pullpen_core::time::{Timestamp, duration, parse_rfc3339, rfc3339};
 use pullpen_core::*;
 use serde_json::{Value, json};
 
-use crate::http::{self, graphql, send};
+use crate::http::{self, encode_path, graphql, send};
 use crate::{Agents, Error, Forge as ForgeTrait, Page, Result, failed_branches, set_branch};
 
 const SEARCH: &str = include_str!("search.graphql");
@@ -111,6 +111,33 @@ impl GitHub {
             m.insert(key, (std::time::Instant::now(), rules.clone()));
         }
         rules
+    }
+
+    /// A write to the PR itself, or to something under it.
+    async fn pull(&self, method: reqwest::Method, id: &PrId, tail: &str, body: Value) -> Result<()> {
+        let path = format!("/repos/{}/pulls/{}{tail}", id.repo, id.number);
+        send(&self.host, self.req(method, &path).json(&body)).await.map(|_| ())
+    }
+
+    /// GitHub re-runs and cancels a workflow run, not a job, and refuses a
+    /// second request for a run it is already acting on: each run is asked
+    /// once. The run's id is only in a job's URL.
+    async fn each_run(&self, id: &PrId, jobs: &[JobRun], verb: &str) -> Result<()> {
+        let mut runs: Vec<&str> = jobs
+            .iter()
+            .filter_map(|j| j.url.split_once("/actions/runs/"))
+            .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
+            .filter(|r| !r.is_empty())
+            .collect();
+        runs.dedup();
+        if runs.is_empty() {
+            return Err(Error::Refused("these checks are not GitHub Actions jobs".into()));
+        }
+        for run in runs {
+            let path = format!("/repos/{}/actions/runs/{run}/{verb}", id.repo);
+            send(&self.host, self.req(reqwest::Method::POST, &path)).await?;
+        }
+        Ok(())
     }
 
     /// A refused merge may be a ruleset pullpen read before it changed: the
@@ -493,6 +520,8 @@ impl GitHub {
             // GitHub reports BEHIND only when protection requires the branch
             // to be current, so seeing it is as good as reading the rule.
             e.requires_up_to_date |= rules.strict || behind;
+            e.auto_merge_off = r["autoMergeAllowed"] == false;
+            e.can_admin = r["viewerCanAdminister"] == true;
         }
         let login = s(n, "/author/login");
         let am = &n["autoMergeRequest"];
@@ -514,6 +543,7 @@ impl GitHub {
                 .map_or_else(Checks::default, |r| checks(r, &rules.checks)),
             reviews: Reviews { have, need, approved_by, changes_requested: decision == "CHANGES_REQUESTED", pending },
             mergeable,
+            mergeable_now: matches!(s(n, "/mergeStateStatus"), "CLEAN" | "UNSTABLE" | "HAS_HOOKS"),
             // GitHub keeps the request on a PR after it merges or closes.
             auto_merge: (!am.is_null() && s(n, "/state") == "OPEN").then(|| AutoMerge {
                 method: method(s(am, "/mergeMethod")).unwrap_or(default),
@@ -740,6 +770,78 @@ impl ForgeTrait for GitHub {
         let node = self.node_id(id).await?;
         let q = "mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}";
         self.gql(q, json!({ "id": node })).await.map(|_| ())
+    }
+
+    async fn allow_auto(&self, repo: &str) -> Result<()> {
+        let req =
+            self.req(reqwest::Method::PATCH, &format!("/repos/{repo}")).json(&json!({ "allow_auto_merge": true }));
+        send(&self.host, req).await?;
+        if let Ok(mut c) = self.caps.lock() {
+            c.entry(format!("{}/{repo}", self.host)).or_default().auto_merge_off = false;
+        }
+        Ok(())
+    }
+
+    async fn ready(&self, id: &PrId, ready: bool) -> Result<()> {
+        let node = self.node_id(id).await?;
+        let name = if ready { "markPullRequestReadyForReview" } else { "convertPullRequestToDraft" };
+        let q = format!("mutation($id:ID!){{{name}(input:{{pullRequestId:$id}}){{clientMutationId}}}}");
+        self.gql(&q, json!({ "id": node })).await.map(|_| ())
+    }
+
+    async fn reopen(&self, id: &PrId) -> Result<()> {
+        self.pull(reqwest::Method::PATCH, id, "", json!({ "state": "open" })).await
+    }
+
+    async fn request_changes(&self, id: &PrId, body: &str) -> Result<()> {
+        let review = json!({ "event": "REQUEST_CHANGES", "body": body });
+        self.pull(reqwest::Method::POST, id, "/reviews", review).await
+    }
+
+    async fn request_review(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        self.pull(reqwest::Method::POST, id, "/requested_reviewers", json!({ "reviewers": logins })).await
+    }
+
+    /// A PR's labels are its issue's. Each call answers with the labels
+    /// left, so the last answer is the PR's labels afterwards.
+    async fn label(&self, id: &PrId, add: &[String], remove: &[String]) -> Result<Vec<String>> {
+        let at = format!("/repos/{}/issues/{}/labels", id.repo, id.number);
+        let mut now = Value::Null;
+        for l in remove {
+            now = send(&self.host, self.req(reqwest::Method::DELETE, &format!("{at}/{}", encode_path(l)))).await?;
+        }
+        if !add.is_empty() || remove.is_empty() {
+            now = send(&self.host, self.req(reqwest::Method::POST, &at).json(&json!({ "labels": add }))).await?;
+        }
+        Ok(now.as_array().into_iter().flatten().map(|l| s(l, "/name").to_string()).collect())
+    }
+
+    async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()> {
+        let path = format!("/repos/{}/issues/{}/assignees", id.repo, id.number);
+        send(&self.host, self.req(reqwest::Method::POST, &path).json(&json!({ "assignees": logins }))).await.map(|_| ())
+    }
+
+    async fn retitle(&self, id: &PrId, title: &str) -> Result<()> {
+        self.pull(reqwest::Method::PATCH, id, "", json!({ "title": title })).await
+    }
+
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String> {
+        let at = format!("/repos/{repo}");
+        let base = match base {
+            Some(b) => b.to_string(),
+            None => s(&send(&self.host, self.req(reqwest::Method::GET, &at)).await?, "/default_branch").to_string(),
+        };
+        let pr = json!({ "title": title, "head": head, "base": base, "body": body });
+        let made = send(&self.host, self.req(reqwest::Method::POST, &format!("{at}/pulls")).json(&pr)).await?;
+        Ok(s(&made, "/html_url").to_string())
+    }
+
+    async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_run(id, jobs, "rerun-failed-jobs").await
+    }
+
+    async fn cancel(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
+        self.each_run(id, jobs, "cancel").await
     }
 
     async fn approve(&self, id: &PrId) -> Result<()> {
