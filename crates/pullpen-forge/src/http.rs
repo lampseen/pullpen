@@ -6,10 +6,21 @@ use serde_json::Value;
 
 use crate::{Error, Result};
 
+const KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(concat!("pullpen/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(30))
+        // A connection kept from the last sync can be dead by the next
+        // request: the laptop slept, or a NAT forgot it. Nothing says so
+        // until a request is sent down it and fails. Pinging while idle
+        // finds a dead one first, and an idle one is not kept for long.
+        .http2_keep_alive_interval(KEEP_ALIVE)
+        .http2_keep_alive_timeout(KEEP_ALIVE / 2)
+        .http2_keep_alive_while_idle(true)
+        .tcp_keepalive(KEEP_ALIVE)
+        .pool_idle_timeout(KEEP_ALIVE * 3)
         .build()
         // Building fails only if the TLS backend cannot initialise, which no
         // retry fixes; the default client says the same thing later, per call.
@@ -59,18 +70,36 @@ pub async fn send(host: &str, req: RequestBuilder) -> Result<Value> {
 /// The body as text, for a job's log: a log that happens to be valid JSON
 /// must stay a log.
 pub async fn text(host: &str, req: RequestBuilder) -> Result<String> {
-    let resp = req.send().await.map_err(|e| Error::Network(format!("{host}: {}", without_url(&e))))?;
-    check(host, resp).await
+    let again = req.try_clone();
+    let resp = match (req.send().await, again) {
+        // Nothing reached the forge, so asking again cannot do anything
+        // twice. A failure after that point is not retried: the forge may
+        // have acted, and a second merge request would report a refusal.
+        (Err(e), Some(again)) if e.is_connect() => again.send().await,
+        (sent, _) => sent,
+    };
+    check(host, resp.map_err(|e| Error::Network(format!("{host}: {}", without_url(&e))))?).await
 }
 
 /// reqwest's errors print the request URL, and a URL can carry a token in
 /// its query string; the host is enough to say where it failed.
+///
+/// reqwest's own line says only that sending failed. Why is in the errors
+/// beneath it, timed out or connection reset, so the deepest one is added.
 fn without_url(e: &reqwest::Error) -> String {
     let mut msg = e.to_string();
     if let Some(u) = e.url() {
         msg = msg.replace(u.as_str(), "");
     }
-    msg.trim().trim_end_matches(['(', ')', ' ', ':']).to_string()
+    let msg = msg.trim().trim_end_matches(['(', ')', ' ', ':']).replace(" for url", "");
+    let mut cause = std::error::Error::source(e);
+    while let Some(deeper) = cause.and_then(|c| c.source()) {
+        cause = Some(deeper);
+    }
+    match cause {
+        Some(c) => format!("{msg}: {c}"),
+        None => msg,
+    }
 }
 
 async fn check(host: &str, resp: Response) -> Result<String> {
