@@ -83,6 +83,10 @@ fn host_and_repo(url: &str) -> Option<(String, String)> {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     let rest = rest.split_once('@').map_or(rest, |(_, r)| r);
     let (host, path) = rest.split_once([':', '/'])?;
+    // `C:\src\acme\api.git` is a clone on a Windows disk, not a host named C.
+    if host.len() == 1 && !url.contains('@') && !url.contains("://") {
+        return None;
+    }
     let path = path.trim_start_matches(|c: char| c.is_ascii_digit()).trim_matches('/').trim_end_matches(".git");
     (!host.is_empty() && path.contains('/')).then(|| (host.to_string(), path.to_string()))
 }

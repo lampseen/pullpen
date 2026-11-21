@@ -87,7 +87,9 @@ fn a_remote_url_names_its_host_and_repo_however_it_is_spelled() {
     ] {
         assert_eq!(host_and_repo(url), want, "{url}");
     }
-    assert_eq!(host_and_repo("/srv/git/acme/api.git"), None, "a path on disk is no forge");
+    for path in ["/srv/git/acme/api.git", r"C:\src\acme\api.git", r"C:\Temp\x/acme/api.git", "C:/src/acme/api.git"] {
+        assert_eq!(host_and_repo(path), None, "a path on disk is no forge: {path}");
+    }
 }
 
 #[test]
