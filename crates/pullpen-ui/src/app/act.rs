@@ -57,6 +57,8 @@ pub enum PromptKind {
     Approve,
     Comment(String),
     Update,
+    /// `:new`, which always asks: the PR is made of what the clone says.
+    New(Action),
     /// Any other action on several PRs at once, which asks once.
     Several(Action),
 }
@@ -123,6 +125,7 @@ pub fn verb(a: &Action) -> &'static str {
         Action::Close => "Closing",
         Action::Update => "Updating",
         Action::Rerun => "Re-running failed jobs of",
+        Action::Create { .. } => "Opening a PR in",
         Action::Label { .. } => "Labelling",
         Action::Assign(_) => "Assigning",
         Action::Title(_) => "Retitling",
@@ -136,6 +139,12 @@ pub fn verb(a: &Action) -> &'static str {
         Action::Open => "Opening",
         Action::Refresh { .. } => "Refreshing",
     }
+}
+
+/// What a job's target is called: its number, or its repo for a PR that
+/// does not exist yet.
+pub fn name(id: &PrId) -> String {
+    if id.number == 0 { id.repo.clone() } else { format!("#{}", id.number) }
 }
 
 fn plural(n: usize, one: &str) -> String {
@@ -523,6 +532,9 @@ impl App {
             (PromptKind::Update, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Update, origin, typed),
             (PromptKind::Approve, Key::Char('y') | Key::Enter) => self.run_batch(ids, Action::Approve, origin, typed),
             (PromptKind::Several(a), Key::Char('y') | Key::Enter) => self.run_batch(ids, a.clone(), origin, typed),
+            (PromptKind::New(a), Key::Char('y') | Key::Enter) => {
+                self.start(vec![(ids[0].clone(), a.clone(), false)], None, origin, typed)
+            }
             (PromptKind::Comment(t), Key::Char('y') | Key::Enter) => {
                 let t = t.clone();
                 self.run_batch(ids, Action::Comment(t), origin, typed)
@@ -699,7 +711,7 @@ impl App {
                         self.say(markup(&format!("{{d|#{n} is already up to date with its base}}")), Mode::Normal);
                     }
                     None => {
-                        let text = format!(":{} #{n}: {reason}", run.job.action.command());
+                        let text = format!(":{} {}: {reason}", run.job.action.command(), name(&id));
                         let to_line = run.origin == Origin::Command && matches!(self.input, Input::Normal);
                         if to_line {
                             self.input =
@@ -726,6 +738,9 @@ impl App {
     fn apply_done(&mut self, run: &Running, note: Option<&str>) -> Option<Line> {
         let id = &run.job.target;
         let n = id.number;
+        if let Action::Create { .. } = run.job.action {
+            return Some(markup(&format!("{{g|✓}} {{f|Opened {}}}", esc(note.unwrap_or_default()))));
+        }
         // A sync can drop the row while its action runs. The action still
         // happened, and saying nothing reads as though it had not.
         let Some(p) = self.find(id).cloned() else {
@@ -811,7 +826,7 @@ impl App {
                 let wher = note.map_or(String::new(), |n| format!(" {}", esc(n)));
                 markup(&format!("{{g|✓}} {{f|Checked out #{n}}}{{d|   {}{wher}}}", esc(branch)))
             }
-            Action::Open | Action::Refresh { .. } => return None,
+            Action::Open | Action::Refresh { .. } | Action::Create { .. } => return None,
         })
     }
 
@@ -903,6 +918,14 @@ impl App {
             PromptKind::Update => {
                 format!("{{f|Bring }}{{B|{what}}}{{f| up to date with their base?}}   {{d|y/Enter yes   n/Esc cancel}}")
             }
+            PromptKind::New(Action::Create { head, base, title, .. }) => format!(
+                "{{f|Open a PR in {}: }}{{B|{}}}{{f| → {}, “{}”?}}   {{d|y/Enter yes   n/Esc cancel}}",
+                esc(&p.targets[0].repo),
+                esc(head),
+                esc(base.as_deref().unwrap_or("its default branch")),
+                esc(title)
+            ),
+            PromptKind::New(_) => String::new(),
             PromptKind::Several(a) => {
                 format!("{{f|:{} on }}{{B|{what}}}{{f|?}}   {{d|y/Enter yes   n/Esc cancel}}", a.command())
             }
@@ -911,6 +934,16 @@ impl App {
             }
         };
         markup(&text)
+    }
+
+    /// `:new`, once the clone has been read: asks before anything is opened.
+    /// The forge is the one a listed PR on that host has, else the host's
+    /// name decides.
+    pub fn request_new(&mut self, host: &str, repo: &str, action: Action) {
+        let listed = self.sections.iter().flat_map(|s| &s.prs).find(|p| p.id.host == host).map(|p| p.id.forge);
+        let gitlab = if host.contains("gitlab") { pullpen_core::Forge::GitLab } else { pullpen_core::Forge::GitHub };
+        let id = PrId { forge: listed.unwrap_or(gitlab), host: host.into(), repo: repo.into(), number: 0 };
+        self.ask(PromptKind::New(action), vec![id], Origin::Command, None);
     }
 
     /// The text back from $EDITOR for a bare `c`.

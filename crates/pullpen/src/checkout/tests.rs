@@ -75,3 +75,43 @@ fn a_remote_that_is_a_windows_path_still_names_its_repo() {
     assert_eq!(remote_for(&clone, &id.repo).as_deref(), Some("win"));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_remote_url_names_its_host_and_repo_however_it_is_spelled() {
+    let want = Some(("gitlab.example.com".to_string(), "platform/infra/runner".to_string()));
+    for url in [
+        "git@gitlab.example.com:platform/infra/runner.git",
+        "https://gitlab.example.com/platform/infra/runner",
+        "https://oauth2:t0ken@gitlab.example.com/platform/infra/runner.git/",
+        "ssh://git@gitlab.example.com:2222/platform/infra/runner.git",
+    ] {
+        assert_eq!(host_and_repo(url), want, "{url}");
+    }
+    assert_eq!(host_and_repo("/srv/git/acme/api.git"), None, "a path on disk is no forge");
+}
+
+#[test]
+fn here_reads_the_branch_its_remote_and_its_newest_commit() {
+    let (root, clone, _) = setup("here");
+    let g = |a: &[&str]| git(&clone, a).unwrap();
+    assert!(here(&clone).unwrap_err().contains("not a forge URL"));
+    g(&["remote", "set-url", "origin", "git@github.com:acme/api.git"]);
+    g(&["switch", "--quiet", "-c", "feat/retry"]);
+    g(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "Retry on 502\n\nThe runner gave up.",
+    ]);
+    let h = here(&clone).unwrap();
+    assert_eq!((h.host.as_str(), h.repo.as_str(), h.head.as_str()), ("github.com", "acme/api", "feat/retry"));
+    assert_eq!((h.title.as_str(), h.body.as_str()), ("Retry on 502", "The runner gave up."));
+    g(&["switch", "--quiet", "--detach"]);
+    assert_eq!(here(&clone).err().as_deref(), Some("not on a branch"));
+    fs::remove_dir_all(root).unwrap();
+}

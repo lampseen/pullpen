@@ -825,6 +825,17 @@ impl ForgeTrait for GitHub {
         self.pull(reqwest::Method::PATCH, id, "", json!({ "title": title })).await
     }
 
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String> {
+        let at = format!("/repos/{repo}");
+        let base = match base {
+            Some(b) => b.to_string(),
+            None => s(&send(&self.host, self.req(reqwest::Method::GET, &at)).await?, "/default_branch").to_string(),
+        };
+        let pr = json!({ "title": title, "head": head, "base": base, "body": body });
+        let made = send(&self.host, self.req(reqwest::Method::POST, &format!("{at}/pulls")).json(&pr)).await?;
+        Ok(s(&made, "/html_url").to_string())
+    }
+
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
         self.each_run(id, jobs, "rerun-failed-jobs").await
     }

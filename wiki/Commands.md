@@ -46,6 +46,7 @@ names; `↑` `↓` walk history, filtered by what you have typed.
 | `:label [#n] +name -name…` | add and remove labels; the answer lists the labels the PR has afterwards |
 | `:assign [#n] [@login…]` | assign people, beside whoever already is; bare `:assign` is yourself |
 | `:title [#n] <text>` | change the title |
+| `:new [base]` | open a PR for the branch checked out where pullpen was started, into `base` or the repo's default branch. The title and description are that branch's newest commit; it asks first. The branch must already be pushed |
 | `:q` `:qa` | back, or quit |
 
 Without a number, a command acts on the selected row, or on every marked row.

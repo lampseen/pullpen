@@ -554,3 +554,52 @@ fn a_title_is_for_one_pr() {
     assert_eq!(sent(&command(&mut a, "title Same for both")), None);
     assert_eq!(said(&a), "E  title: one PR at a time");
 }
+
+fn new_pr() -> pullpen_core::Action {
+    pullpen_core::Action::Create {
+        head: "feat/retry".into(),
+        base: None,
+        title: "Retry on 502".into(),
+        body: String::new(),
+    }
+}
+
+#[test]
+fn new_asks_what_it_will_open_then_says_where_it_is() {
+    let mut a = app();
+    let fx = command(&mut a, "new release");
+    assert!(fx.contains(&Effect::New { base: Some("release".into()) }), "the clone is read off the UI's hands");
+    a.request_new("gitlab.com", "platform/runner", new_pr());
+    let Input::Confirm(p) = &a.input else { panic!("no prompt") };
+    assert_eq!(p.targets[0].forge, pullpen_core::Forge::GitLab, "the forge a listed PR on that host has");
+    let line: String = a.prompt_line(p).iter().map(|s| s.text.as_str()).collect();
+    assert!(
+        line.starts_with("Open a PR in platform/runner: feat/retry → its default branch, “Retry on 502”?"),
+        "{line}"
+    );
+    let fx = press(&mut a, &[Key::Char('y')]);
+    assert_eq!(sent(&fx), Some(new_pr()));
+    for e in fx {
+        if let Effect::Run(job) = e {
+            let note = Some("https://gitlab.com/platform/runner/-/merge_requests/813".to_string());
+            a.job_done(pullpen_core::JobResult { job, outcome: pullpen_core::Outcome::Done, note });
+        }
+    }
+    assert_eq!(said(&a), "✓ Opened https://gitlab.com/platform/runner/-/merge_requests/813");
+}
+
+#[test]
+fn a_refused_new_pr_names_the_repo_not_a_number() {
+    let mut a = app();
+    a.request_new("github.example.com", "acme/api", new_pr());
+    let Input::Confirm(p) = &a.input else { panic!("no prompt") };
+    assert_eq!(p.targets[0].forge, pullpen_core::Forge::GitHub);
+    let fx = press(&mut a, &[Key::Enter]);
+    for e in fx {
+        if let Effect::Run(job) = e {
+            let outcome = pullpen_core::Outcome::Failed { reason: "No commits between main and feat/retry".into() };
+            a.job_done(pullpen_core::JobResult { job, outcome, note: None });
+        }
+    }
+    assert!(said(&a).contains(":new acme/api: No commits between main and feat/retry"), "{}", said(&a));
+}

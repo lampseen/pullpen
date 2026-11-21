@@ -28,6 +28,7 @@ pub enum Cmd {
     Label,
     Assign,
     Title,
+    New,
     Messages,
     Clear,
     Quit,
@@ -74,6 +75,7 @@ pub const COMMANDS: &[CmdInfo] = &[
     c("label", Cmd::Label, "add +labels, remove -labels"),
     c("assign", Cmd::Assign, "assign people, or yourself"),
     c("title", Cmd::Title, "change the title"),
+    c("new", Cmd::New, "open a PR for the branch you are on"),
 ];
 
 pub const ALIASES: &[(&str, Cmd)] = &[("am", Cmd::Automerge)];

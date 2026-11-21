@@ -678,3 +678,33 @@ async fn assigning_and_retitling_hit_their_endpoints() {
     g.assign(&id(), &["mara".to_string()]).await.unwrap();
     g.retitle(&id(), "Bump deps, again").await.unwrap();
 }
+
+#[tokio::test]
+async fn a_new_pr_goes_to_the_repos_default_branch_unless_told() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "trunk" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for base in ["trunk", "release"] {
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/pulls"))
+            .and(body_partial_json(json!({ "title": "Retry", "head": "feat/retry", "base": base, "body": "why" })))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(json!({ "html_url": format!("https://github.com/o/r/pull/8?{base}") })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let g = gh(&server);
+    assert_eq!(
+        g.create("o/r", "feat/retry", None, "Retry", "why").await.unwrap(),
+        "https://github.com/o/r/pull/8?trunk"
+    );
+    let url = g.create("o/r", "feat/retry", Some("release"), "Retry", "why").await.unwrap();
+    assert_eq!(url, "https://github.com/o/r/pull/8?release");
+}

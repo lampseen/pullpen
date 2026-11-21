@@ -119,6 +119,9 @@ pub trait Forge: Send + Sync {
     /// Adds assignees; those already assigned stay.
     async fn assign(&self, id: &PrId, logins: &[String]) -> Result<()>;
     async fn retitle(&self, id: &PrId, title: &str) -> Result<()>;
+    /// Opens a PR and answers with its URL. No `base` means the repo's
+    /// default branch.
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String>;
     /// Runs these jobs of the PR's pipeline again.
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()>;
     /// Stops these jobs of the PR's pipeline.
@@ -175,6 +178,9 @@ pub async fn run(f: &dyn Forge, job: &Job) -> Result<Option<String>> {
         }
         Action::Assign(logins) => f.assign(id, logins).await,
         Action::Title(title) => f.retitle(id, title).await,
+        Action::Create { head, base, title, body } => {
+            return f.create(&id.repo, head, base.as_deref(), title, body).await.map(Some);
+        }
         Action::Rerun | Action::Cancel => return pipeline(f, job).await.map(Some),
         Action::Checkout { .. } | Action::Open | Action::Refresh { .. } => Ok(()),
     };

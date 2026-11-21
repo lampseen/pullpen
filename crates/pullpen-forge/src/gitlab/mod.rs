@@ -629,6 +629,19 @@ impl ForgeTrait for GitLab {
         send(&self.host, self.rest(reqwest::Method::PUT, id, "").json(&json!({ "title": title }))).await.map(|_| ())
     }
 
+    async fn create(&self, repo: &str, head: &str, base: Option<&str>, title: &str, body: &str) -> Result<String> {
+        let at = format!("{}/api/v4/projects/{}", self.base, encode_path(repo));
+        let base = match base {
+            Some(b) => b.to_string(),
+            None => {
+                s(&send(&self.host, self.http.get(&at).bearer_auth(&self.token)).await?, "/default_branch").to_string()
+            }
+        };
+        let mr = json!({ "source_branch": head, "target_branch": base, "title": title, "description": body });
+        let req = self.http.post(format!("{at}/merge_requests")).bearer_auth(&self.token).json(&mr);
+        Ok(s(&send(&self.host, req).await?, "/web_url").to_string())
+    }
+
     async fn rerun(&self, id: &PrId, jobs: &[JobRun]) -> Result<()> {
         self.each_job(id, jobs, "retry").await
     }

@@ -52,6 +52,41 @@ pub fn checkout(
     Ok(format!("in {}", tilde(&dir)))
 }
 
+/// What `:new` opens a PR from: the branch checked out in `dir`, where its
+/// remote says it lives, and its newest commit as the title and body.
+#[derive(Debug)]
+pub struct Here {
+    pub host: String,
+    pub repo: String,
+    pub head: String,
+    pub title: String,
+    pub body: String,
+}
+
+pub fn here(dir: &Path) -> Result<Here, String> {
+    let head = git(dir, &["branch", "--show-current"])?.trim().to_string();
+    if head.is_empty() {
+        return Err("not on a branch".into());
+    }
+    let remote =
+        git(dir, &["config", &format!("branch.{head}.remote")]).map_or("origin".into(), |r| r.trim().to_string());
+    let url = git(dir, &["remote", "get-url", &remote])?;
+    let (host, repo) = host_and_repo(url.trim()).ok_or(format!("{remote} is not a forge URL: {}", url.trim()))?;
+    let title = git(dir, &["log", "-1", "--format=%s"])?.trim().to_string();
+    let body = git(dir, &["log", "-1", "--format=%b"])?.trim().to_string();
+    Ok(Here { host, repo, head, title, body })
+}
+
+/// `git@host:owner/repo.git`, `https://host/owner/repo` and
+/// `ssh://git@host:22/owner/repo.git`, as (host, owner/repo).
+fn host_and_repo(url: &str) -> Option<(String, String)> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let rest = rest.split_once('@').map_or(rest, |(_, r)| r);
+    let (host, path) = rest.split_once([':', '/'])?;
+    let path = path.trim_start_matches(|c: char| c.is_ascii_digit()).trim_matches('/').trim_end_matches(".git");
+    (!host.is_empty() && path.contains('/')).then(|| (host.to_string(), path.to_string()))
+}
+
 fn diverged(branch: &str) -> String {
     format!("local {branch} has commits the PR does not; left as it was")
 }

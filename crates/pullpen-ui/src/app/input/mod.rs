@@ -404,6 +404,10 @@ impl App {
             Cmd::Ready => self.request_simple(ids, Action::Ready(true), o, typed),
             Cmd::Draft => self.request_simple(ids, Action::Ready(false), o, typed),
             Cmd::Reopen => self.request_simple(ids, Action::Reopen, o, typed),
+            Cmd::New => {
+                let base = Some(p.rest.trim().to_string()).filter(|b| !b.is_empty());
+                vec![Effect::New { base }]
+            }
             Cmd::Assign if p.rest.trim().is_empty() => {
                 let me = vec![self.me.clone()];
                 self.request_simple(ids, Action::Assign(me), o, typed)

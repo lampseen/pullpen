@@ -594,3 +594,27 @@ async fn labels_titles_and_assignees_are_written_and_the_labels_left_come_back()
     g.retitle(&id(), "Runner: retry on 502").await.unwrap();
     g.assign(&id(), &["mara".to_string()]).await.unwrap();
 }
+
+#[tokio::test]
+async fn a_new_mr_goes_to_the_projects_default_branch_unless_told() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/platform%2Frunner"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mr = json!({ "source_branch": "feat/retry", "target_branch": "main", "title": "Retry", "description": "why" });
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/platform%2Frunner/merge_requests"))
+        .and(body_partial_json(mr))
+        .respond_with(
+            ResponseTemplate::new(201)
+                .set_body_json(json!({ "web_url": "https://gitlab.com/platform/runner/-/merge_requests/813" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let url = gl(&server, &[]).create("platform/runner", "feat/retry", None, "Retry", "why").await.unwrap();
+    assert_eq!(url, "https://gitlab.com/platform/runner/-/merge_requests/813");
+}

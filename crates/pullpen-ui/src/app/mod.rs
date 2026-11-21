@@ -158,6 +158,11 @@ pub enum Effect {
         targets: Vec<PrId>,
     },
     Open(String),
+    /// Read the clone pullpen was started in, and come back with
+    /// `App::request_new`.
+    New {
+        base: Option<String>,
+    },
     Refresh {
         all: bool,
     },
@@ -445,10 +450,10 @@ impl App {
         let Some(r) = self.jobs.iter().find(|j| j.batch.is_none()) else { return vec![] };
         let host = &r.job.target.host;
         markup(&format!(
-            "{{a|{}}} {{f|{} #{} on {host}…}}",
+            "{{a|{}}} {{f|{} {} on {host}…}}",
             self.spinner(),
             act::verb(&r.job.action),
-            r.job.target.number
+            act::esc(&act::name(&r.job.target))
         ))
     }
 

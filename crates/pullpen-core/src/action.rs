@@ -39,6 +39,14 @@ pub enum Action {
     /// Assign these logins, beside whoever already is.
     Assign(Vec<String>),
     Title(String),
+    /// Open a PR for `head` in the job's target repo; the target has no
+    /// number yet. No `base` means the repo's default branch.
+    Create {
+        head: String,
+        base: Option<String>,
+        title: String,
+        body: String,
+    },
     /// Run the failed jobs of the PR's newest pipeline again.
     Rerun,
     /// Stop the jobs of the PR's newest pipeline that have yet to finish.
@@ -68,6 +76,7 @@ impl Action {
             Action::Label { .. } => "label",
             Action::Assign(_) => "assign",
             Action::Title(_) => "title",
+            Action::Create { .. } => "new",
             Action::Rerun => "rerun",
             Action::Cancel => "cancel",
             Action::Open => "open",
