@@ -44,9 +44,11 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, name: linux_amd64 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, name: linux_arm64 }
           # GitHub has retired its Intel macOS images; Apple silicon builds the
-          # Intel binary as a cross target.
-          - { target: x86_64-apple-darwin, os: macos-14, name: darwin_amd64 }
-          - { target: aarch64-apple-darwin, os: macos-14, name: darwin_arm64 }
+          # Intel binary as a cross target. Not pinned to a macOS version, as
+          # ci.yml is not: a pinned image is withdrawn in time, and a job on a
+          # withdrawn image is cancelled before it starts.
+          - { target: x86_64-apple-darwin, os: macos-latest, name: darwin_amd64 }
+          - { target: aarch64-apple-darwin, os: macos-latest, name: darwin_arm64 }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, name: windows_amd64 }
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm, name: windows_arm64 }
     runs-on: ${{ matrix.os }}
