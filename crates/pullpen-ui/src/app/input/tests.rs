@@ -421,3 +421,38 @@ fn an_updated_branch_is_not_believed_behind_until_the_forge_catches_up() {
     a.synced(i, prs, total);
     assert_eq!(a.find(&id).unwrap().mergeable, Behind, "behind again after the update landed is news");
 }
+
+#[test]
+fn an_update_with_nothing_to_bring_in_is_an_answer_not_an_error() {
+    let mut a = app();
+    a.section_mut().sel = 1;
+    for e in press(&mut a, &[Key::Char('u')]) {
+        if let Effect::Run(job) = e {
+            let reason = "There are no new commits on the base branch.".to_string();
+            a.job_done(pullpen_core::JobResult { job, outcome: pullpen_core::Outcome::Failed { reason }, note: None });
+        }
+    }
+    assert_eq!(said(&a), "#812 is already up to date with its base");
+}
+
+#[test]
+fn u_on_a_merged_pr_is_refused_here() {
+    let mut a = app();
+    let at = a.now;
+    a.section_mut().prs[1].state = pullpen_core::PrState::Merged { at, method: pullpen_core::MergeMethod::Squash };
+    a.section_mut().sel = 1;
+    assert!(press(&mut a, &[Key::Char('u')]).is_empty());
+    assert_eq!(said(&a), "E  #812 is already merged");
+}
+
+#[test]
+fn an_action_that_finishes_after_its_row_left_still_says_so() {
+    let mut a = app();
+    a.section_mut().sel = 1;
+    let fx = press(&mut a, &[Key::Char('a')]);
+    for s in &mut a.sections {
+        s.prs.retain(|p| p.id.number != 812);
+    }
+    done(&mut a, fx);
+    assert_eq!(said(&a), "✓ :approve #812 done   it has left this list");
+}

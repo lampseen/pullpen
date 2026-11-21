@@ -107,6 +107,9 @@ fn method_of(c: char) -> Option<MergeMethod> {
     ORDER.into_iter().find(|m| key_of(*m) == c)
 }
 
+/// How GitHub's refusal of an update with nothing to bring in reads.
+const UP_TO_DATE: &str = "no new commits on the base branch";
+
 /// What the progress line says while a job runs: "Merging #812 on …".
 pub fn verb(a: &Action) -> &'static str {
     match a {
@@ -442,6 +445,12 @@ impl App {
             self.say(markup(&format!("{{d|#{} is already being updated}}", id.number)), Mode::Normal);
             return vec![];
         }
+        if let ([id], Action::Update) = (&ids[..], &action)
+            && self.find(id).is_some_and(|p| p.merged())
+        {
+            self.error(&format!("#{} is already merged", id.number), Mode::Normal);
+            return vec![];
+        }
         let kind = match &action {
             Action::Close => Some(PromptKind::Close),
             Action::Update if ids.len() > 1 => Some(PromptKind::Update),
@@ -670,6 +679,11 @@ impl App {
                 }
                 match run.batch.filter(|_| !run.merging_now) {
                     Some(b) => self.batches[b].failed.push((n, reason.clone())),
+                    // GitHub refuses an update with nothing to bring in.
+                    // That is an answer to `u`, not a failure of it.
+                    None if run.job.action == Action::Update && reason.contains(UP_TO_DATE) => {
+                        self.say(markup(&format!("{{d|#{n} is already up to date with its base}}")), Mode::Normal);
+                    }
                     None => {
                         let text = format!(":{} #{n}: {reason}", run.job.action.command());
                         let to_line = run.origin == Origin::Command && matches!(self.input, Input::Normal);
@@ -697,8 +711,14 @@ impl App {
     /// Applies a finished job to the rows, and says so.
     fn apply_done(&mut self, run: &Running, note: Option<&str>) -> Option<Line> {
         let id = &run.job.target;
-        let p = self.find(id).cloned()?;
         let n = id.number;
+        // A sync can drop the row while its action runs. The action still
+        // happened, and saying nothing reads as though it had not.
+        let Some(p) = self.find(id).cloned() else {
+            let cmd = run.job.action.command();
+            let local = matches!(run.job.action, Action::Open | Action::Refresh { .. });
+            return (!local).then(|| markup(&format!("{{g|✓}} {{f|:{cmd} #{n} done}}{{d|   it has left this list}}")));
+        };
         Some(match &run.job.action {
             Action::Merge { method } => {
                 self.remove_pr(id);

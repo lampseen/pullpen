@@ -615,6 +615,18 @@ MR's `merge_error`. pullpen now asks the MR, with
 seconds, and reports `merge_error` as the refusal it is. This is the
 polling GitLab's API documentation describes for the endpoint.
 
+**`u` says what the forge meant.** GitHub refuses an update that has
+nothing to bring in; that now reads "already up to date with its base", not
+as an error. The match is on GitHub's wording as remembered, "no new commits
+on the base branch", and is unverified against a live refusal: if the
+wording differs the forge's own line shows, as before. `u` on a merged PR is
+refused without asking the forge. A rate-limited action says "try again",
+since nothing retries an action. An action that finishes after a sync
+dropped its row still reports. Proved by
+`an_update_with_nothing_to_bring_in_is_an_answer_not_an_error`,
+`u_on_a_merged_pr_is_refused_here` and
+`an_action_that_finishes_after_its_row_left_still_says_so`.
+
 Proved by `merges_arms_and_closes_sync_again_while_the_forge_catches_up`,
 `an_updated_branch_is_not_believed_behind_until_the_forge_catches_up`,
 `a_second_u_while_the_first_is_under_way_sends_nothing`,

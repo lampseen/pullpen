@@ -16,7 +16,9 @@ use pullpen_core::{Action, Capabilities, Forge as Kind, Job, MergeMethod, Pipeli
 pub enum Error {
     #[error("not signed in to {0}; set a token or run its CLI's login")]
     Auth(String),
-    #[error("rate limited; retrying in {retry_in}s")]
+    /// The words are for an action, which nothing retries; the sync loop,
+    /// which does retry, has its own.
+    #[error("rate limited; try again in {retry_in}s")]
     RateLimited { retry_in: u64 },
     #[error("{host} {status}")]
     Server { host: String, status: u16 },
