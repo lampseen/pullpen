@@ -78,10 +78,43 @@ fn every_failed_check_says_how_to_fix_it() {
         None,
         Ok(&crate::credentials::Credentials::default()),
         &|_| None,
+        &|_, _, _| Ok("mara".into()),
     );
     let failed: Vec<&check::Finding> = found.iter().filter(|f| !f.ok).collect();
     assert_eq!(failed.len(), 4, "token, section term, key, palette");
     assert!(failed.iter().all(|f| f.fix.is_some()), "a failure without a fix line");
+}
+
+/// The forge's line from a check of a GitLab whose stored token the forge
+/// answers with `answer`.
+fn sign_in_line(answer: pullpen_forge::Result<String>) -> (bool, String, Option<String>) {
+    let mut creds = crate::credentials::Credentials::default();
+    creds.set("gitlab.com", "glpat-stored".into());
+    let c = Config {
+        forge: vec![ForgeCfg { kind: Kind::Gitlab, host: None, token_cmd: None, scope: None, groups: vec![] }],
+        ..Config::default()
+    };
+    let found =
+        check::check(Path::new("/nonexistent/config.toml"), &c, None, Ok(&creds), &|_| None, &|_, _, _| answer.clone());
+    let f = found.into_iter().find(|f| f.what.starts_with("gitlab.com")).unwrap();
+    (f.ok, f.what, f.fix)
+}
+
+#[test]
+fn a_token_the_forge_rejects_fails_the_check_with_its_fix() {
+    let rejected = pullpen_forge::Error::Rejected { host: "gitlab.com".into(), why: "Token is expired.".into() };
+    assert_eq!(
+        sign_in_line(Err(rejected)),
+        (false, "gitlab.com: token rejected (Token is expired.)".into(), Some("run `pullpen setup gitlab.com`".into()))
+    );
+    assert_eq!(sign_in_line(Ok("mara".into())), (true, "gitlab.com: signed in as mara".into(), None));
+}
+
+#[test]
+fn an_unreachable_forge_is_not_called_signed_in() {
+    let (ok, what, fix) = sign_in_line(Err(pullpen_forge::Error::Network("gitlab.com: timed out".into())));
+    assert!(!ok && fix.is_some());
+    assert_eq!(what, "gitlab.com: token not checked (gitlab.com: timed out)");
 }
 
 #[test]

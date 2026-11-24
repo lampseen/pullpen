@@ -1,13 +1,18 @@
 # Troubleshooting
 
-Start with `pullpen config check`. It checks the config, each forge's sign-in,
-section queries, key remaps and the palette file, and prints the fix for
-anything that fails.
+Start with `pullpen config check`. It checks the config, asks each forge
+whether its token still works, checks section queries, key remaps and the
+palette file, and prints the fix for anything that fails.
 
 **The status line says `not signed in to github.com`, and the forge shows ✗.**
 pullpen found no token. If you use `gh`, check it is installed and signed in
 where you run pullpen: on an image-based system, a `gh` inside a toolbox is
 not on the host. Otherwise run `pullpen setup` and give it a token.
+
+**The status line says a forge `rejected the token`, and the forge shows ✗.**
+The forge refused a token it used to accept, most often because it expired.
+The line gives the forge's reason and what to run, which depends on where the
+token came from. The other forge's PRs stay listed meanwhile.
 
 **A section says 0, or fewer than you expect.** Its query may be narrower than
 you think: its text is on the right of the tabs. A section such as *Open*

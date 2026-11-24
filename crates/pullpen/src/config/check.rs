@@ -5,7 +5,7 @@ use std::path::Path;
 
 use pullpen_core::Forge;
 use pullpen_core::query::{Query, Term};
-use pullpen_forge::auth;
+use pullpen_forge::{Error, auth};
 
 use super::{Config, Kind, expand};
 use crate::credentials::Credentials;
@@ -31,6 +31,8 @@ pub fn check(
     load_err: Option<&str>,
     creds: Result<&Credentials, &str>,
     env: &dyn Fn(&str) -> Option<String>,
+    // Having a token proves nothing: only the forge can say it works.
+    verify: &dyn Fn(Forge, &str, &str) -> pullpen_forge::Result<String>,
 ) -> Vec<Finding> {
     let mut out = vec![match load_err {
         Some(e) => bad(e.to_string(), "correct the line it names, or move the file aside to use the defaults"),
@@ -50,8 +52,14 @@ pub fn check(
             Kind::Github => Forge::GitHub,
             Kind::Gitlab => Forge::GitLab,
         };
-        out.push(match auth::token(kind, f.host(), creds.get(f.host()), f.token_cmd.as_deref(), env) {
-            Ok(_) => ok(format!("{}: signed in", f.host())),
+        let host = f.host();
+        let found = auth::found(kind, host, creds.get(host), f.token_cmd.as_deref(), env);
+        out.push(match found.map(|(from, t)| (from, verify(kind, host, &t))) {
+            Ok((_, Ok(login))) => ok(format!("{host}: signed in as {login}")),
+            Ok((from, Err(Error::Rejected { why, .. }))) => {
+                bad(format!("{host}: token rejected ({why})"), &from.renew(kind, host))
+            }
+            Ok((_, Err(e))) => bad(format!("{host}: token not checked ({e})"), "run it again when the forge answers"),
             Err(_) => bad(
                 format!("{}: no token", f.host()),
                 match kind {

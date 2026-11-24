@@ -48,6 +48,7 @@ fn main() -> Result<()> {
                 cfg_err.as_deref(),
                 creds.as_ref().map_err(String::as_str),
                 &|k| env::var(k).ok(),
+                &commands::login,
             );
             std::process::exit(if config::check::report(&found) { 0 } else { 1 });
         }

@@ -29,7 +29,8 @@ pub fn client() -> reqwest::Client {
 
 /// The forge's own explanation from an error body: GitHub's `errors` (each a
 /// string or an object with a `message`) in preference to its generic
-/// `message`, GitLab's `message` (a string, or an object of lists) or `error`.
+/// `message`, GitLab's `message` (a string, or an object of lists) or `error`,
+/// whose `error_description` is the sentence where there is one.
 fn explanation(body: &Value) -> Option<String> {
     let specific: Vec<String> = body
         .get("errors")
@@ -56,7 +57,7 @@ fn explanation(body: &Value) -> Option<String> {
         Some(Value::Array(a)) => parts.extend(a.iter().filter_map(Value::as_str).map(String::from)),
         _ => {}
     }
-    if let Some(e) = body.get("error").and_then(Value::as_str) {
+    if let Some(e) = body.get("error_description").or(body.get("error")).and_then(Value::as_str) {
         parts.push(e.to_string());
     }
     (!parts.is_empty()).then(|| parts.join("; "))
@@ -114,7 +115,9 @@ async fn check(host: &str, resp: Response) -> Result<String> {
     let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
     let why = explanation(&body);
     Err(match status {
-        StatusCode::UNAUTHORIZED => Error::Auth(host.into()),
+        StatusCode::UNAUTHORIZED => {
+            Error::Rejected { host: host.into(), why: why.unwrap_or_else(|| "401 Unauthorized".into()) }
+        }
         StatusCode::TOO_MANY_REQUESTS => Error::RateLimited { retry_in: retry_after.unwrap_or(60) },
         StatusCode::FORBIDDEN if exhausted || retry_after.is_some() => {
             let now = pullpen_core::time::Timestamp::now().0 as u64;

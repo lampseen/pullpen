@@ -32,6 +32,8 @@ pub type Unreachable = (Kind, String);
 struct Entry {
     forge: Arc<dyn Forge>,
     me: OnceCell<String>,
+    /// What renews this forge's token, for when the forge rejects it.
+    renew: String,
 }
 
 pub struct Live {
@@ -63,10 +65,10 @@ impl Live {
                 CfgKind::Github => Kind::GitHub,
                 CfgKind::Gitlab => Kind::GitLab,
             };
-            let token = match auth::token(kind, f.host(), creds.get(f.host()), f.token_cmd.as_deref(), |k| {
+            let (from, token) = match auth::found(kind, f.host(), creds.get(f.host()), f.token_cmd.as_deref(), |k| {
                 std::env::var(k).ok()
             }) {
-                Ok(t) => t,
+                Ok(found) => found,
                 // An unconfigured forge without a token is one the user does
                 // not use; only a configured one is worth a complaint.
                 Err(_) => {
@@ -96,7 +98,7 @@ impl Live {
                 )),
             };
             kinds.push(kind);
-            forges.push(Entry { forge, me: OnceCell::new() });
+            forges.push(Entry { forge, me: OnceCell::new(), renew: from.renew(kind, f.host()) });
         }
         let (tx, rx) = channel();
         let groups = shared(sections);
@@ -159,7 +161,7 @@ impl Live {
                                 None => Msg::Up(kind),
                             });
                         }
-                        Err(err) => failed = Some((kind, e.forge.host().to_string(), err)),
+                        Err(err) => failed = Some((e, err)),
                     }
                     caps.extend(e.forge.capabilities());
                 }
@@ -193,9 +195,9 @@ impl Live {
                         }
                         every
                     }
-                    Some((kind, host, err)) => {
+                    Some((e, err)) => {
                         backoff = if err.transient() { (backoff * 2).clamp(1, BACKOFF_MAX) } else { every.as_secs() };
-                        let _ = tx.send(Msg::Down(kind, describe(&host, &err, backoff)));
+                        let _ = tx.send(Msg::Down(e.forge.kind(), describe(e, &err, backoff)));
                         Duration::from_secs(backoff)
                     }
                 };
@@ -250,12 +252,18 @@ fn shared(sections: &[Section]) -> Vec<Vec<usize>> {
 }
 
 /// The status line's words for a background failure.
-fn describe(host: &str, e: &Error, retry: u64) -> String {
-    match e {
+fn describe(e: &Entry, err: &Error, retry: u64) -> String {
+    let host = e.forge.host();
+    match err {
         Error::Server { status, .. } => format!("{host} {status} · retrying in {retry}s"),
         Error::RateLimited { retry_in } => format!("{host} rate limited · retrying in {retry_in}s"),
         Error::Network(_) => format!("{host} unreachable · retrying in {retry}s"),
         Error::Auth(_) => format!("not signed in to {host}"),
+        // The forge's first sentence says why; the rest is advice for an
+        // OAuth client, and the line has room for one fix.
+        Error::Rejected { why, .. } => {
+            format!("{host} rejected the token: {} · {}", why.split(". ").next().unwrap_or(why), e.renew)
+        }
         Error::Refused(why) | Error::Decode(why) => format!("{host}: {why}"),
     }
 }

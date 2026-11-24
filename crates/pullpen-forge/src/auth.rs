@@ -17,15 +17,48 @@ pub fn token(
     token_cmd: Option<&str>,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<String> {
-    let vars: &[&str] = match kind {
+    found(kind, host, stored, token_cmd, env).map(|(_, t)| t)
+}
+
+/// Where a token came from, which decides what renews it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Env(&'static str),
+    Stored,
+    Cli,
+    Cmd,
+}
+
+impl Source {
+    /// What to do when the forge rejects a token from here.
+    pub fn renew(self, kind: Forge, host: &str) -> String {
+        let cli = if kind == Forge::GitHub { "gh" } else { "glab" };
+        match self {
+            Source::Env(var) => format!("replace the token in ${var}"),
+            Source::Stored => format!("run `pullpen setup {host}`"),
+            Source::Cli => format!("run `{cli} auth login --hostname {host}`"),
+            Source::Cmd => "make token_cmd in config.toml print a token that works".into(),
+        }
+    }
+}
+
+/// The token, and where it was found.
+pub fn found(
+    kind: Forge,
+    host: &str,
+    stored: Option<&str>,
+    token_cmd: Option<&str>,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<(Source, String)> {
+    let vars: &[&'static str] = match kind {
         Forge::GitHub => &["PULLPEN_GITHUB_TOKEN", "GITHUB_TOKEN"],
         Forge::GitLab => &["PULLPEN_GITLAB_TOKEN", "GITLAB_TOKEN"],
     };
-    if let Some(t) = vars.iter().find_map(|v| env(v).filter(|t| !t.trim().is_empty())) {
-        return Ok(t.trim().to_string());
+    if let Some((v, t)) = vars.iter().find_map(|v| env(v).filter(|t| !t.trim().is_empty()).map(|t| (*v, t))) {
+        return Ok((Source::Env(v), t.trim().to_string()));
     }
     if let Some(t) = stored.filter(|t| !t.is_empty()) {
-        return Ok(t.to_string());
+        return Ok((Source::Stored, t.to_string()));
     }
     let from_cli = match kind {
         Forge::GitHub => output("gh", &["auth", "token", "--hostname", host]),
@@ -36,12 +69,12 @@ pub fn token(
         }),
     };
     if let Some(t) = from_cli.filter(|t| !t.is_empty() && !t.contains(' ')) {
-        return Ok(t);
+        return Ok((Source::Cli, t));
     }
     if let Some(cmd) = token_cmd
         && let Some(t) = shell(cmd).map(|o| o.trim().to_string()).filter(|t| !t.is_empty())
     {
-        return Ok(t);
+        return Ok((Source::Cmd, t));
     }
     Err(Error::Auth(host.into()))
 }

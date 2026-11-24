@@ -75,8 +75,6 @@ fn a_token_never_reaches_a_file() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// An expired GitLab token left Mine empty of a GitHub PR that GitHub had
-/// just returned.
 #[test]
 fn one_forge_failing_does_not_hide_the_others_prs() {
     let dir = std::env::temp_dir().join(format!("pullpen-partial-{}", std::process::id()));
@@ -99,10 +97,17 @@ fn one_forge_failing_does_not_hide_the_others_prs() {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "viewer": { "login": "me" } } })))
             .mount(&github)
             .await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(401)).mount(&gitlab).await;
+    Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": "invalid_token",
+                "error_description": "Token is expired. You can either do re-authorization or token refresh."
+            })))
+            .mount(&gitlab)
+            .await;
         (github, gitlab)
     });
-    let entry = |forge: Arc<dyn Forge>| Entry { forge, me: OnceCell::new() };
+    let entry =
+        |forge: Arc<dyn Forge>| Entry { forge, me: OnceCell::new(), renew: "run `pullpen setup gitlab.com`".into() };
     let (tx, rx) = channel();
     let live = Live {
         rt,
@@ -139,11 +144,12 @@ fn one_forge_failing_does_not_hide_the_others_prs() {
     while down.is_none() && Instant::now() < until {
         match live.rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Msg::Synced { prs, .. }) => shown = Some(prs),
-            Ok(Msg::Down(kind, _)) => down = Some(kind),
+            Ok(Msg::Down(kind, why)) => down = Some((kind, why)),
             _ => {}
         }
     }
-    assert_eq!(down, Some(Kind::GitLab), "the failing forge is still reported");
+    let said = "gitlab.com rejected the token: Token is expired · run `pullpen setup gitlab.com`";
+    assert_eq!(down, Some((Kind::GitLab, said.into())), "the failing forge says why and what to run");
     let shown = shown.expect("GitHub answered, so its PR is shown");
     assert_eq!(shown.iter().map(|p| (p.id.forge, p.id.number)).collect::<Vec<_>>(), [(Kind::GitHub, 1)]);
     let mut written = Vec::new();
