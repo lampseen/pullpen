@@ -141,6 +141,7 @@ impl Live {
             let mut backoff = 0u64;
             loop {
                 let (mut prs, mut total, mut failed, mut caps) = (Vec::new(), 0, None, HashMap::new());
+                let mut answered = false;
                 for e in forges.iter().filter(|e| q.reaches(e.forge.kind())) {
                     let kind = e.forge.kind();
                     let page = match e.me.get_or_try_init(|| e.forge.viewer()).await {
@@ -149,6 +150,7 @@ impl Live {
                     };
                     match page {
                         Ok(p) => {
+                            answered = true;
                             total += p.total;
                             prs.extend(p.prs);
                             // The receiver is gone only once the app has quit.
@@ -169,19 +171,25 @@ impl Live {
                     total = prs.len();
                 }
                 let _ = tx.send(Msg::Caps(caps));
+                // One forge failing must not hide what another returned, so
+                // those rows are shown; the status line marks the failure.
+                // Only a pass every forge answered is cached, so the next
+                // start never paints a partial list as the section.
+                for (i, section) in members.iter().filter(|_| answered) {
+                    let mut prs = prs.clone();
+                    sort(&mut prs, section.sort);
+                    if failed.is_none() {
+                        // A cache that will not write costs only a slower
+                        // first paint next time.
+                        let _ = cache::store(&cache_dir, section, &prs, total);
+                    }
+                    let _ = tx.send(Msg::Synced { section: *i, prs, total });
+                }
                 let wait = match failed {
                     None => {
                         backoff = 0;
                         if let Ok(mut l) = last.lock() {
                             *l = Some(Instant::now());
-                        }
-                        for (i, section) in &members {
-                            let mut prs = prs.clone();
-                            sort(&mut prs, section.sort);
-                            // A cache that will not write costs only a
-                            // slower first paint next time.
-                            let _ = cache::store(&cache_dir, section, &prs, total);
-                            let _ = tx.send(Msg::Synced { section: *i, prs, total });
                         }
                         every
                     }
