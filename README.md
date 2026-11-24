@@ -74,6 +74,7 @@ script.
 |---|---|
 | `pullpen` | open the queue |
 | `pullpen setup` | sign in, and answer what pullpen needs to know |
+| `pullpen setup <host>` | sign in to one forge again, when its token expires |
 | `pullpen settings` | see and change any setting |
 | `pullpen config check` | what works, and what to type to fix what does not |
 

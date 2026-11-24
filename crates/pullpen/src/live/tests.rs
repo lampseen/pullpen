@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use pullpen_core::query::Query;
 use pullpen_core::{Section, Sort, View};
 use pullpen_forge::github::GitHub;
+use pullpen_forge::gitlab::GitLab;
 use serde_json::json;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -72,6 +73,88 @@ fn a_token_never_reaches_a_file() {
         assert!(!text.contains(TOKEN), "{} contains the token", f.display());
     }
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn one_forge_failing_does_not_hide_the_others_prs() {
+    let dir = std::env::temp_dir().join(format!("pullpen-partial-{}", std::process::id()));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (github, gitlab) = rt.block_on(async {
+        let (github, gitlab) = (MockServer::start().await, MockServer::start().await);
+        Mock::given(body_string_contains("search("))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "search": {
+                "issueCount": 1, "pageInfo": { "hasNextPage": false },
+                "nodes": [ { "id": "PR_1", "number": 1, "title": "t", "state": "OPEN",
+                             "repository": { "nameWithOwner": "o/r" }, "baseRefName": "main", "author": { "login": "a" } } ]
+            } } })))
+            .mount(&github)
+            .await;
+        Mock::given(body_string_contains("nodes(ids"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "nodes": [ { "id": "PR_1" } ] } })))
+            .mount(&github)
+            .await;
+        Mock::given(body_string_contains("viewer"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "viewer": { "login": "me" } } })))
+            .mount(&github)
+            .await;
+    Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": "invalid_token",
+                "error_description": "Token is expired. You can either do re-authorization or token refresh."
+            })))
+            .mount(&gitlab)
+            .await;
+        (github, gitlab)
+    });
+    let entry =
+        |forge: Arc<dyn Forge>| Entry { forge, me: OnceCell::new(), renew: "run `pullpen setup gitlab.com`".into() };
+    let (tx, rx) = channel();
+    let live = Live {
+        rt,
+        forges: Arc::new(vec![
+            entry(Arc::new(GitHub::with_api("github.com", &github.uri(), TOKEN.into(), Agents::default(), "", false))),
+            entry(Arc::new(GitLab::with_base(
+                "gitlab.com",
+                &gitlab.uri(),
+                TOKEN.into(),
+                Agents::default(),
+                vec![],
+                false,
+            ))),
+        ]),
+        tx,
+        rx,
+        wake: vec![Arc::default()],
+        last: Arc::default(),
+        repos: Arc::default(),
+        worktree: false,
+    };
+    let section = Section {
+        name: "Open".into(),
+        short: "Open".into(),
+        query: "is:open".into(),
+        sort: Sort::Updated,
+        view: View::List,
+        counts: true,
+    };
+    live.spawn_group(vec![(0, section)], Duration::from_secs(60), dir.clone());
+
+    let (mut shown, mut down) = (None, None);
+    let until = Instant::now() + Duration::from_secs(10);
+    while down.is_none() && Instant::now() < until {
+        match live.rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Msg::Synced { prs, .. }) => shown = Some(prs),
+            Ok(Msg::Down(kind, why)) => down = Some((kind, why)),
+            _ => {}
+        }
+    }
+    let said = "gitlab.com rejected the token: Token is expired · run `pullpen setup gitlab.com`";
+    assert_eq!(down, Some((Kind::GitLab, said.into())), "the failing forge says why and what to run");
+    let shown = shown.expect("GitHub answered, so its PR is shown");
+    assert_eq!(shown.iter().map(|p| (p.id.forge, p.id.number)).collect::<Vec<_>>(), [(Kind::GitHub, 1)]);
+    let mut written = Vec::new();
+    files(&dir, &mut written);
+    assert!(written.is_empty(), "a partial list is not cached as the section: {written:?}");
 }
 
 /// Ages count from the moment drawn, not from launch: the loop sets

@@ -228,7 +228,7 @@ async fn http_failures_map_to_what_the_ui_does_with_them() {
         .await;
     let g = gh(&server);
     let at = |n| PrId { number: n, ..id() };
-    assert_eq!(g.approve(&at(1)).await.unwrap_err(), Error::Auth("github.com".into()));
+    assert_eq!(g.approve(&at(1)).await.unwrap_err(), Error::Rejected { host: "github.com".into(), why: "x".into() });
     assert_eq!(g.approve(&at(2)).await.unwrap_err(), Error::Server { host: "github.com".into(), status: 502 });
     assert_eq!(g.approve(&at(3)).await.unwrap_err(), Error::RateLimited { retry_in: 8 });
     assert_eq!(g.approve(&at(4)).await.unwrap_err(), Error::RateLimited { retry_in: 3 });

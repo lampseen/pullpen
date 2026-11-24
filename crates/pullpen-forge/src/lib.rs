@@ -16,8 +16,12 @@ use pullpen_core::{
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
+    /// No token was found for the host.
     #[error("not signed in to {0}; set a token or run its CLI's login")]
     Auth(String),
+    /// The forge refused the token it was sent. The reason is the forge's own.
+    #[error("{host} rejected the token: {why}")]
+    Rejected { host: String, why: String },
     /// The words are for an action, which nothing retries; the sync loop,
     /// which does retry, has its own.
     #[error("rate limited; try again in {retry_in}s")]

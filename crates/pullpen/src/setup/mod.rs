@@ -101,6 +101,17 @@ fn sign_in(io: &mut Io, d: &mut Deps, f: Forge, host: &str, creds: &mut Credenti
     }
 }
 
+/// Signs in again to the configured forge at `host` and asks nothing else
+/// (ADR-030). False when there is nothing to save.
+pub fn renew(io: &mut Io, d: &mut Deps, cfg: &Config, host: &str, creds: &mut Credentials) -> io::Result<bool> {
+    let Some(f) = cfg.forges().into_iter().find(|f| f.host() == host) else {
+        io.say(&format!("pullpen is not set up for {host}; `pullpen setup` adds a forge"))?;
+        return Ok(false);
+    };
+    let kind = if f.kind == Kind::Github { Forge::GitHub } else { Forge::GitLab };
+    Ok(sign_in(io, d, kind, host, creds)?.is_some())
+}
+
 fn check(io: &mut Io, d: &mut Deps, f: Forge, host: &str, token: &str) -> io::Result<Result<Vec<Place>, String>> {
     match (d.verify)(f, host, token) {
         Ok((login, places)) => {

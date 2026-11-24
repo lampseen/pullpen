@@ -136,7 +136,10 @@ async fn refusals_carry_gitlabs_message_in_either_shape() {
     let g = gl(&server, &[]);
     assert_eq!(g.merge(&id(), MergeMethod::Merge).await.unwrap_err(), Error::Refused("405 Method Not Allowed".into()));
     assert_eq!(g.comment(&id(), "").await.unwrap_err(), Error::Refused("body can't be blank".into()));
-    assert_eq!(g.approve(&id()).await.unwrap_err(), Error::Auth("gitlab.com".into()));
+    assert_eq!(
+        g.approve(&id()).await.unwrap_err(),
+        Error::Rejected { host: "gitlab.com".into(), why: "401 Unauthorized".into() }
+    );
 }
 
 #[tokio::test]

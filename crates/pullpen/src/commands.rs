@@ -20,16 +20,26 @@ pub fn interactive() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
+fn forge(f: Forge, host: &str, token: &str) -> Box<dyn pullpen_forge::Forge> {
+    let t = token.to_string();
+    match f {
+        Forge::GitHub => Box::new(pullpen_forge::github::GitHub::new(host, t, Agents::default(), "", false)),
+        Forge::GitLab => Box::new(pullpen_forge::gitlab::GitLab::new(host, t, Agents::default(), vec![], false)),
+    }
+}
+
+/// The login a token belongs to, for `pullpen config check`.
+pub fn login(f: Forge, host: &str, token: &str) -> pullpen_forge::Result<String> {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+    rt.map_err(|e| pullpen_forge::Error::Network(e.to_string()))?.block_on(forge(f, host, token).viewer())
+}
+
 /// Asks the forge whose token this is: its answer is the only proof a
 /// token works.
 fn verify(f: Forge, host: &str, token: &str) -> Result<setup::SignedIn, String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-    let t = token.to_string();
+    let forge = forge(f, host, token);
     rt.block_on(async move {
-        let forge: Box<dyn pullpen_forge::Forge> = match f {
-            Forge::GitHub => Box::new(pullpen_forge::github::GitHub::new(host, t, Agents::default(), "", false)),
-            Forge::GitLab => Box::new(pullpen_forge::gitlab::GitLab::new(host, t, Agents::default(), vec![], false)),
-        };
         let login = forge.viewer().await?;
         // Knowing where someone can watch is a help, not a requirement; a
         // token that cannot list groups still signs in.
@@ -39,8 +49,8 @@ fn verify(f: Forge, host: &str, token: &str) -> Result<setup::SignedIn, String> 
     .map_err(|e| e.to_string())
 }
 
-pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config) -> Result<()> {
-    let creds = credentials::load(creds_path).unwrap_or_default();
+pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config, host: Option<&str>) -> Result<()> {
+    let mut creds = credentials::load(creds_path).unwrap_or_default();
     let stdin = io::stdin();
     let (mut input, mut out) = (stdin.lock(), io::stdout());
     let mut secret = read_hidden;
@@ -49,6 +59,13 @@ pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config) -> Result<()> {
     let cli = |f: Forge, host: &str| auth::token(f, host, None, None, |_| None).ok();
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let mut deps = setup::Deps { verify: &mut check, cli: &cli, env: &env };
+    if let Some(host) = host {
+        if setup::renew(&mut io, &mut deps, &cfg, host, &mut creds)? && (!creds.token.is_empty() || creds_path.exists())
+        {
+            credentials::save(creds_path, &creds).with_context(|| format!("writing {}", creds_path.display()))?;
+        }
+        return Ok(());
+    }
     let (cfg, creds) = setup::run(&mut io, &mut deps, cfg, creds)?;
     if cfg.forge.is_empty() {
         return Ok(());
@@ -122,7 +139,7 @@ fn menu(cfg_path: &Path, creds_path: &Path, mut cfg: Config) -> Result<i32> {
             settings::Leave::Done => return Ok(0),
             settings::Leave::Setup => {
                 drop(input);
-                setup(cfg_path, creds_path, cfg)?;
+                setup(cfg_path, creds_path, cfg, None)?;
             }
             settings::Leave::Edit => {
                 drop(input);
@@ -136,8 +153,14 @@ fn menu(cfg_path: &Path, creds_path: &Path, mut cfg: Config) -> Result<i32> {
                     eprintln!("starting {editor}: {e}");
                 }
                 let (fresh, err) = Config::load(cfg_path);
-                let found =
-                    config::check::check(cfg_path, &fresh, err.as_deref(), Ok(&creds), &|k| std::env::var(k).ok());
+                let found = config::check::check(
+                    cfg_path,
+                    &fresh,
+                    err.as_deref(),
+                    Ok(&creds),
+                    &|k| std::env::var(k).ok(),
+                    &login,
+                );
                 config::check::report(&found);
             }
         }

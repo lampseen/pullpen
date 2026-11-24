@@ -8,6 +8,7 @@
 | `pullpen --fixtures` | the design's sample data, offline |
 | `pullpen --section <name>` | open on a section |
 | `pullpen setup` | sign in and answer what pullpen needs |
+| `pullpen setup <host>` | sign in to one forge again and ask nothing else |
 | `pullpen settings` | the settings menu |
 | `pullpen settings get <key>` | one setting's value |
 | `pullpen settings set <key> <value>` | change one setting |

@@ -689,3 +689,27 @@ The cap rises to 11,500 lines. This record is written before those three
 groups are, so the figure is an estimate from one measured group, not a
 measurement of all four; the pull request that adds them states what they
 came to.
+
+## ADR-030 — `pullpen setup <host>` signs in to one forge again
+
+A token expires on its own schedule, and the fix for it has to be one
+command. `pullpen setup` already replaces a token, but it is the first-run
+walk: every forge, what to watch, how to merge, where the clones are. A fix
+line that sends someone through all of that to change one token is not one
+they will trust.
+
+The counter-argument is that this is a second way to do what setup does,
+and every argument a command takes is something to document and keep
+working. It would win if the short form asked anything of its own. It does
+not: it is the sign-in step of setup, for the one configured forge named,
+and it saves only the credentials. A host that is not configured is told to
+run `pullpen setup`, which is where forges are added.
+
+`pullpen setup <host>` is what the status line and `pullpen config check`
+name when the forge rejects a token pullpen stored. A token from the
+environment, a CLI login or `token_cmd` is renewed where it came from, and
+the fix line says so.
+
+Proved by `renewing_one_host_asks_nothing_else_and_stores_the_new_token`,
+`renewing_a_host_that_is_not_configured_says_so` and
+`the_fix_names_where_the_token_came_from`.

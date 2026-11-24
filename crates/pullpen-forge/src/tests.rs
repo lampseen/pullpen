@@ -18,6 +18,37 @@ fn only_retryable_failures_are_transient() {
     assert!(Error::Network("reset".into()).transient());
     assert!(!Error::Refused("no".into()).transient());
     assert!(!Error::Auth("h".into()).transient());
+    assert!(!Error::Rejected { host: "h".into(), why: "expired".into() }.transient());
+}
+
+/// GitLab's answer to an expired token, as it sent it.
+#[tokio::test]
+async fn a_rejected_token_keeps_the_forges_reason() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::any())
+        .respond_with(wiremock::ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "error": "invalid_token",
+            "error_description": "Token is expired. You can either do re-authorization or token refresh."
+        })))
+        .mount(&server)
+        .await;
+    let err = http::send("gitlab.com", http::client().get(server.uri())).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "gitlab.com rejected the token: Token is expired. You can either do re-authorization or token refresh."
+    );
+}
+
+#[test]
+fn the_fix_names_where_the_token_came_from() {
+    use pullpen_core::Forge::{GitHub, GitLab};
+    let env = |k: &str| (k == "GITLAB_TOKEN").then(|| "t".to_string());
+    let (from, _) = auth::found(GitLab, "gitlab.com", Some("stored"), None, env).unwrap();
+    assert_eq!(from.renew(GitLab, "gitlab.com"), "replace the token in $GITLAB_TOKEN");
+    let (from, _) = auth::found(GitLab, "gitlab.com", Some("stored"), None, |_| None).unwrap();
+    assert_eq!(from.renew(GitLab, "gitlab.com"), "run `pullpen setup gitlab.com`");
+    assert_eq!(auth::Source::Cli.renew(GitHub, "ghe.example"), "run `gh auth login --hostname ghe.example`");
+    assert_eq!(auth::Source::Cli.renew(GitLab, "gitlab.com"), "run `glab auth login --hostname gitlab.com`");
 }
 
 #[test]

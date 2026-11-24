@@ -21,6 +21,9 @@ Setup asks, in order:
 Every question shows its default in brackets; Enter takes it. Running setup
 again starts from your last answers.
 
+`pullpen setup gitlab.com` asks only the sign-in question, for that one
+forge, and saves only the token. It is what to run when a token expires.
+
 ## pullpen settings
 
 `pullpen settings` lists every setting with its current value. Type its
