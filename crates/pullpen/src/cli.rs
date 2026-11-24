@@ -32,7 +32,10 @@ pub struct Args {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Sign in to your forges and answer what pullpen needs to know.
-    Setup,
+    Setup {
+        /// Sign in again to this one forge, such as gitlab.com, and ask nothing else.
+        host: Option<String>,
+    },
     /// See and change every setting; `get` and `set` do it from a script.
     Settings {
         #[command(subcommand)]

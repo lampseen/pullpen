@@ -52,7 +52,7 @@ fn main() -> Result<()> {
             );
             std::process::exit(if config::check::report(&found) { 0 } else { 1 });
         }
-        Some(cli::Command::Setup) => return commands::setup(&cfg_path, &creds_path, cfg),
+        Some(cli::Command::Setup { host }) => return commands::setup(&cfg_path, &creds_path, cfg, host.as_deref()),
         Some(cli::Command::Settings { action }) => {
             std::process::exit(commands::settings(&cfg_path, &creds_path, cfg, action)?)
         }
@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     // empty list. Without a terminal, start anyway; the defaults may suffice.
     if !args.fixtures && !cfg_path.exists() && commands::interactive() {
         println!("No config yet, so pullpen setup runs first.\n");
-        commands::setup(&cfg_path, &creds_path, Config::default())?;
+        commands::setup(&cfg_path, &creds_path, Config::default(), None)?;
         (cfg, cfg_err) = Config::load(&cfg_path);
     }
     let theme = theme(&args, &cfg);

@@ -49,8 +49,8 @@ fn verify(f: Forge, host: &str, token: &str) -> Result<setup::SignedIn, String> 
     .map_err(|e| e.to_string())
 }
 
-pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config) -> Result<()> {
-    let creds = credentials::load(creds_path).unwrap_or_default();
+pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config, host: Option<&str>) -> Result<()> {
+    let mut creds = credentials::load(creds_path).unwrap_or_default();
     let stdin = io::stdin();
     let (mut input, mut out) = (stdin.lock(), io::stdout());
     let mut secret = read_hidden;
@@ -59,6 +59,13 @@ pub fn setup(cfg_path: &Path, creds_path: &Path, cfg: Config) -> Result<()> {
     let cli = |f: Forge, host: &str| auth::token(f, host, None, None, |_| None).ok();
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let mut deps = setup::Deps { verify: &mut check, cli: &cli, env: &env };
+    if let Some(host) = host {
+        if setup::renew(&mut io, &mut deps, &cfg, host, &mut creds)? && (!creds.token.is_empty() || creds_path.exists())
+        {
+            credentials::save(creds_path, &creds).with_context(|| format!("writing {}", creds_path.display()))?;
+        }
+        return Ok(());
+    }
     let (cfg, creds) = setup::run(&mut io, &mut deps, cfg, creds)?;
     if cfg.forge.is_empty() {
         return Ok(());
@@ -132,7 +139,7 @@ fn menu(cfg_path: &Path, creds_path: &Path, mut cfg: Config) -> Result<i32> {
             settings::Leave::Done => return Ok(0),
             settings::Leave::Setup => {
                 drop(input);
-                setup(cfg_path, creds_path, cfg)?;
+                setup(cfg_path, creds_path, cfg, None)?;
             }
             settings::Leave::Edit => {
                 drop(input);

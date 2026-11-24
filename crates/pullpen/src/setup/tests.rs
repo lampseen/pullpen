@@ -29,6 +29,48 @@ fn run_with(script: &str, cfg: Config, gh_login: bool, verify_ok: bool) -> (Conf
     (c, k, String::from_utf8(out).unwrap())
 }
 
+/// `renew` for `host`, with a stored GitLab token the forge now refuses and
+/// a typed one it accepts.
+fn renew_with(host: &str) -> (bool, Credentials, String) {
+    let cfg = Config {
+        forge: vec![ForgeCfg { kind: Kind::Gitlab, host: None, token_cmd: None, scope: None, groups: vec![] }],
+        ..Config::default()
+    };
+    let mut creds = Credentials::default();
+    creds.set("gitlab.com", "glpat_expired".into());
+    // Enter keeps the stored token, which the forge then refuses.
+    let mut input = Cursor::new(b"\n".to_vec());
+    let mut out = Vec::new();
+    let mut secret = || Ok("glpat_typed".to_string());
+    let mut verify = |_: Forge, _: &str, t: &str| match t {
+        "glpat_typed" => Ok(("mara".to_string(), vec![])),
+        _ => Err("gitlab.com rejected the token: Token is expired.".to_string()),
+    };
+    let (cli, env) = (|_: Forge, _: &str| None, |_: &str| None);
+    let mut d = Deps { verify: &mut verify, cli: &cli, env: &env };
+    let mut io = Io { input: &mut input, out: &mut out, secret: &mut secret };
+    let saved = renew(&mut io, &mut d, &cfg, host, &mut creds).unwrap();
+    (saved, creds, String::from_utf8(out).unwrap())
+}
+
+#[test]
+fn renewing_one_host_asks_nothing_else_and_stores_the_new_token() {
+    let (saved, creds, out) = renew_with("gitlab.com");
+    assert!(saved);
+    assert_eq!(creds.get("gitlab.com"), Some("glpat_typed"));
+    assert!(out.contains("Token is expired") && out.contains("signed in to gitlab.com as mara"), "{out}");
+    assert!(!out.contains("Watch") && !out.contains("Merg") && !out.contains("Use GitHub"), "{out}");
+    assert!(!out.contains("glpat_"), "a token is never printed");
+}
+
+#[test]
+fn renewing_a_host_that_is_not_configured_says_so() {
+    let (saved, creds, out) = renew_with("gitlab.example");
+    assert!(!saved);
+    assert_eq!(creds.get("gitlab.com"), Some("glpat_expired"), "nothing changed");
+    assert_eq!(out.trim(), "pullpen is not set up for gitlab.example; `pullpen setup` adds a forge");
+}
+
 #[test]
 fn both_forges_with_the_gh_login_and_a_typed_gitlab_token() {
     // both; GitHub: host, use gh, scope; GitLab: host, (token is typed), groups;
