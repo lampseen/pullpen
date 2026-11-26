@@ -35,6 +35,8 @@ const HISTORY_MAX: usize = 500;
 
 struct Term {
     kitty: bool,
+    /// Whether mouse reporting is on, to follow `:mouse`.
+    mouse: bool,
     /// The window title last sent, so it is sent again only when it changes.
     title: String,
 }
@@ -54,14 +56,14 @@ impl Term {
         // escape sequence for every move of the pointer.
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            Term { kitty, title: String::new() }.modes_off();
+            Term { kitty, mouse: true, title: String::new() }.modes_off();
             hook(info);
         }));
         // Save the window title on the terminal's own stack (XTWINOPS 22),
         // so leaving can put back whatever the shell had; a terminal without
         // the stack ignores it, and the shell's next prompt retitles anyway.
         execute!(stdout(), Print("\x1b[22;0t"), SetTitle("pullpen"))?;
-        Ok((terminal, Term { kitty, title: "pullpen".into() }))
+        Ok((terminal, Term { kitty, mouse: true, title: "pullpen".into() }))
     }
 
     /// Best effort: the terminal may already be gone, and an error here
@@ -137,6 +139,10 @@ fn event_loop(terminal: &mut DefaultTerminal, term: &mut Term, l: &mut Loop) -> 
         if title != term.title {
             execute!(stdout(), SetTitle(&title))?;
             term.title = title;
+        }
+        if l.app.ui.mouse != term.mouse {
+            term.mouse = l.app.ui.mouse;
+            if term.mouse { execute!(stdout(), EnableMouseCapture)? } else { execute!(stdout(), DisableMouseCapture)? }
         }
         draw(terminal, l.app)?;
         let mut effects = Vec::new();

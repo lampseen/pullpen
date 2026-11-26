@@ -44,3 +44,8 @@ Optional: everything below is also a key. Each line is a test in
 
 A confirm prompt, the command line, a filter and `?` take keys only
 (`a_click_at_a_confirm_prompt_changes_nothing`).
+
+While pullpen has the mouse, most terminals select text only with `Shift`
+held. `:mouse` hands the mouse back to the terminal, and again takes it
+(`mouse_turns_the_mouse_off_and_the_next_one_turns_it_back_on` in
+`crates/pullpen-ui/src/app/input/tests.rs`).

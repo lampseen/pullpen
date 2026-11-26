@@ -108,6 +108,9 @@ pub struct UiConfig {
     pub delete_branch: bool,
     /// How often a watched pipeline is asked for while it runs.
     pub watch: std::time::Duration,
+    /// Whether the terminal is asked to report the mouse. While it is, the
+    /// terminal's own text selection needs Shift held.
+    pub mouse: bool,
 }
 
 impl Default for UiConfig {
@@ -118,6 +121,7 @@ impl Default for UiConfig {
             default_method: DefaultMethod::Repo,
             delete_branch: true,
             watch: pipeline::WATCH,
+            mouse: true,
         }
     }
 }

@@ -603,3 +603,13 @@ fn a_refused_new_pr_names_the_repo_not_a_number() {
     }
     assert!(said(&a).contains(":new acme/api: No commits between main and feat/retry"), "{}", said(&a));
 }
+
+#[test]
+fn mouse_turns_the_mouse_off_and_the_next_one_turns_it_back_on() {
+    let mut a = app();
+    assert!(a.ui.mouse, "on unless asked");
+    command(&mut a, "mouse");
+    assert_eq!((a.ui.mouse, said(&a).as_str()), (false, "mouse off: the terminal selects text again"));
+    command(&mut a, "mouse");
+    assert_eq!((a.ui.mouse, said(&a).as_str()), (true, "mouse on"));
+}
