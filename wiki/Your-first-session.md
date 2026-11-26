@@ -32,7 +32,9 @@ how many PRs are armed and failing, when it last synced, and each forge with
 | `?` | every key |
 | `q` | back, or quit |
 
-[All the keys](Keys).
+[All the keys](Keys). The mouse works too: click a tab or a row,
+double-click to open, click the top row of a PR to go back, and scroll with
+the wheel ([Mouse](Keys#mouse)).
 
 ## Walking away
 

@@ -467,6 +467,12 @@ impl App {
                 self.input = Input::Messages;
                 vec![]
             }
+            Cmd::Mouse => {
+                self.ui.mouse = !self.ui.mouse;
+                let now = if self.ui.mouse { "on" } else { "off: the terminal selects text again" };
+                self.say(markup(&format!("{{d|mouse {now}}}")), Mode::Normal);
+                vec![]
+            }
             Cmd::Clear if self.view_is(self.active, pullpen_core::View::Merged) => self.clear_landed(),
             Cmd::Clear => {
                 self.refused(":clear drops finished rows in Merged");

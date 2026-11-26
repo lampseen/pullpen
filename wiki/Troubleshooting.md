@@ -28,6 +28,10 @@ check, a conflict or a draft, and the key that helps.
 **A merge or an approval fails.** The message is the forge's own reason.
 `:messages` keeps the last 200.
 
+**Dragging does not select text, or clicks do odd things.** pullpen asks the
+terminal for the mouse. Hold `Shift` while dragging to select, or type
+`:mouse` to turn the mouse off until you quit.
+
 **Something else.** The log is `~/.local/state/pullpen/pullpen.log`
 (`%LOCALAPPDATA%\pullpen\state\pullpen.log` on Windows); it never contains a
 token. Attach `pullpen config check` and `pullpen --version` to an
