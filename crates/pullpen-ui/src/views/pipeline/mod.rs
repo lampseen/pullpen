@@ -12,9 +12,9 @@ use crate::palette::Tok;
 use crate::span::{Line, fit, lr, markup, s, sp, with_bg};
 
 /// The steps pane's width in the job screen.
-const LW: usize = 40;
+pub const LW: usize = 40;
 /// Rows above the body: the PR's four, a gap, the job, a gap, the headings.
-const JOB_TOP: usize = 8;
+pub const JOB_TOP: usize = 8;
 
 /// The pipeline screen's state; `job` is set while a job is open over it.
 #[derive(Clone, Debug)]
@@ -197,31 +197,32 @@ fn job_row(j: &JobRun, sel: bool, w: usize, ctx: &Ctx) -> Line {
     if sel { with_bg(l, Tok::Sel) } else { l }
 }
 
-pub fn pipeline_screen(o: &PipelineScreen, ctx: &Ctx) -> Vec<Line> {
+/// The screen, and the job each of its rows shows.
+pub fn pipeline_screen(o: &PipelineScreen, ctx: &Ctx) -> (Vec<Line>, Vec<Option<usize>>) {
     let (w, pr) = (o.w, o.pr);
     let mut out = head(pr, o.section, "pipeline", &o.refreshed, w, ctx);
-    let mut body: Vec<Line> = Vec::new();
+    let mut body: Vec<(Option<usize>, Line)> = Vec::new();
     // The body row of the selected job, to keep it on screen.
     let mut at = 0;
     match o.runs {
-        None => body.push(markup("  {d|asking for the pipeline…}")),
-        Some([]) => body.push(markup("  {d|no pipeline has run for this PR}")),
+        None => body.push((None, markup("  {d|asking for the pipeline…}"))),
+        Some([]) => body.push((None, markup("  {d|no pipeline has run for this PR}"))),
         Some(runs) => {
             let mut k = 0;
             for (i, r) in runs.iter().enumerate() {
                 if i > 0 {
-                    body.push(vec![]);
+                    body.push((None, vec![]));
                 }
-                body.push(run_head(r, pr, w, ctx));
+                body.push((None, run_head(r, pr, w, ctx)));
                 if !o.pipe.shown(i, r) {
-                    body.push(markup(&format!("      {{d|zo to show its {} jobs}}", r.jobs.len())));
+                    body.push((None, markup(&format!("      {{d|zo to show its {} jobs}}", r.jobs.len()))));
                     continue;
                 }
                 for j in &r.jobs {
                     if k == o.pipe.sel {
                         at = body.len();
                     }
-                    body.push(job_row(j, k == o.pipe.sel, w, ctx));
+                    body.push((Some(k), job_row(j, k == o.pipe.sel, w, ctx)));
                     k += 1;
                 }
             }
@@ -229,13 +230,17 @@ pub fn pipeline_screen(o: &PipelineScreen, ctx: &Ctx) -> Vec<Line> {
     }
     let room = o.h.saturating_sub(out.len() + 2);
     let skip = (at + 1).saturating_sub(room);
-    out.extend(body.into_iter().skip(skip).take(room));
+    let mut hits = vec![None; out.len()];
+    for (hit, line) in body.into_iter().skip(skip).take(room) {
+        hits.push(hit);
+        out.push(line);
+    }
     while out.len() < o.h.saturating_sub(2) {
         out.push(vec![]);
     }
     out.push(status(w, &o.status));
     out.push(o.cmd.clone());
-    out.into_iter().map(|l| fit(&l, w, false)).collect()
+    (out.into_iter().map(|l| fit(&l, w, false)).collect(), hits)
 }
 
 /// A step as the job screen lists it, from GitHub's steps or, on GitLab,

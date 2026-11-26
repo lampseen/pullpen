@@ -151,7 +151,7 @@ fn event_loop(terminal: &mut DefaultTerminal, term: &mut Term, l: &mut Loop) -> 
                         _ => None,
                     };
                     if let Some(ev) = ev {
-                        l.app.mouse(ev, Instant::now());
+                        effects.extend(l.app.mouse(ev, Instant::now()));
                     }
                 }
                 // A resize needs nothing beyond the redraw at the top of the

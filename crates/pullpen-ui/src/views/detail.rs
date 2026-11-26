@@ -12,12 +12,12 @@ use super::words::verdict_long;
 use crate::palette::Tok;
 use crate::span::{Line, Span, fit, lr, markup, s, sp};
 
-const LW: usize = 56;
+pub const LW: usize = 56;
 const FACT_W: usize = 59;
 /// Checks shown before the rest fold behind `zo`.
 const FOLDED: usize = 5;
 /// Rows above the panes: breadcrumb, title, meta, verdict, facts, heading.
-const TOP: usize = 11;
+pub const TOP: usize = 11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
@@ -249,8 +249,15 @@ pub fn matching(files: &[FileDiff], filter: &str) -> Vec<usize> {
 }
 
 /// The `F` file list: every changed file with its size, filtered by what
-/// has been typed, in the same surface panel as the `?` overlay.
-pub fn picker(files: &[FileDiff], filter: &str, sel: usize, current: usize, h: usize) -> Vec<Line> {
+/// has been typed, in the same surface panel as the `?` overlay. With it,
+/// the row of the filtered list each panel row shows.
+pub fn picker(
+    files: &[FileDiff],
+    filter: &str,
+    sel: usize,
+    current: usize,
+    h: usize,
+) -> (Vec<Line>, Vec<Option<usize>>) {
     use super::help::PANEL_W;
     let pad = |l: &[Span]| {
         let mut v = vec![sp(3)];
@@ -261,6 +268,7 @@ pub fn picker(files: &[FileDiff], filter: &str, sel: usize, current: usize, h: u
         if filter.is_empty() { markup("{B|files}") } else { markup(&format!("{{B|files}}{{a|  {}}}", esc(filter))) };
     let hint = markup("{d|type to filter · ↑↓ move · Enter open · Esc close}");
     let mut out = vec![pad(&[]), pad(&lr(&title, &hint, PANEL_W - 6)), pad(&[])];
+    let mut hits = vec![None; out.len()];
     let shown = matching(files, filter);
     let room = h.saturating_sub(12).max(3);
     let start = sel.saturating_sub(room - 1);
@@ -274,6 +282,7 @@ pub fn picker(files: &[FileDiff], filter: &str, sel: usize, current: usize, h: u
         l.push(sp(2));
         l.push(s(&f.path, Tok::Fg));
         let line = pad(&l);
+        hits.push(Some(row));
         out.push(if row == sel {
             crate::span::with_bg(
                 line.into_iter()
@@ -293,7 +302,7 @@ pub fn picker(files: &[FileDiff], filter: &str, sel: usize, current: usize, h: u
     }
     out.push(pad(&markup(&format!("{{d|{} of {} files}}", shown.len(), files.len()))));
     out.push(pad(&[]));
-    out
+    (out, hits)
 }
 
 /// Rows where each hunk's header sits, for `]c` and `[c`.

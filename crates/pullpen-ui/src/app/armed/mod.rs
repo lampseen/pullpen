@@ -208,18 +208,20 @@ impl App {
         let mut out = vec![tabs(&tab, self.active, w, self.narrow(w), right), vec![]];
         let (mut body, mut sel_line) = (Vec::new(), 0);
         for (title, members) in groups.into_iter().filter(|(_, m)| !m.is_empty()) {
-            body.push(heading(&title, members.len()));
+            body.push((None, heading(&title, members.len())));
             for (i, line) in members {
                 if i == sec.sel {
                     sel_line = body.len();
                 }
-                body.push(line);
+                body.push((Some(i), line));
             }
-            body.push(vec![]);
+            body.push((None, vec![]));
         }
         let room = h.saturating_sub(4);
         let start = sel_line.saturating_sub(room.saturating_sub(1));
-        out.extend(body.into_iter().skip(start).take(room));
+        let (hits, shown): (Vec<_>, Vec<Line>) = body.into_iter().skip(start).take(room).unzip();
+        self.set_hits(out.len(), hits);
+        out.extend(shown);
         while out.len() < h.saturating_sub(2) {
             out.push(vec![]);
         }

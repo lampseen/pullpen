@@ -217,6 +217,9 @@ pub struct App {
     /// Seconds east of UTC, for showing clock times.
     pub tz_offset: i64,
     pub last_click: Option<(usize, Instant)>,
+    /// The item each screen row of the last frame showed, so a click lands
+    /// on what was drawn and not on a second copy of the layout.
+    pub(crate) hits: std::cell::RefCell<Vec<Option<usize>>>,
     pub caps: HashMap<String, Capabilities>,
     pub forges: Vec<Forge>,
     pub theme: Theme,
@@ -265,6 +268,7 @@ impl App {
             last_visit: None,
             tz_offset: 0,
             last_click: None,
+            hits: Default::default(),
             caps: HashMap::new(),
             forges: vec![Forge::GitHub, Forge::GitLab],
             theme,
@@ -560,6 +564,7 @@ impl App {
             status: self.status(w),
             cmd: self.cmd_line(w),
         };
+        self.hits.borrow_mut().clear();
         let mut lines = match self
             .pipe_lines(w, h)
             .or_else(|| self.detail_lines(w, h))
@@ -568,7 +573,11 @@ impl App {
             .or_else(|| self.merged_lines(w, h))
         {
             Some(l) => l,
-            None => list_screen(&screen, &ctx),
+            None => {
+                // Rows start under the tabs, a blank and the header.
+                self.set_hits(3, (sec.offset..rows.len()).take(body_rows(h)).map(Some));
+                list_screen(&screen, &ctx)
+            }
         };
         if let Some((menu, mw)) = self.menu() {
             let bottom = lines.len().saturating_sub(2);
@@ -613,7 +622,9 @@ impl App {
         let mut lines = crate::views::detail::detail_screen(&screen, &self.ctx());
         if let (Some((filter, sel)), Some(files)) = (&d.picker, self.diffs.get(&d.id)) {
             help::fade(&mut lines, h.saturating_sub(2));
-            help::place(&mut lines, &crate::views::detail::picker(files, filter, *sel, d.file, h), w);
+            let (panel, hits) = crate::views::detail::picker(files, filter, *sel, d.file, h);
+            help::place(&mut lines, &panel, w);
+            self.set_hits(help::TOP, hits);
         }
         Some(lines)
     }
