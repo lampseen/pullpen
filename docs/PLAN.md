@@ -47,7 +47,7 @@ Each row is settled. The ones with a record are answered by its number: ADR-001 
 | Clipboard / browser | `open` crate for `o`; no clipboard in v1 | |
 | Row treatment | **1a columns** (`rowA`) | Chosen in design review. |
 | Vocabulary | "PR" everywhere; GitLab `!812` displayed `#812`; both spellings accepted in commands | Design §01, §07. |
-| Mouse | Optional, additive: click row selects, click tab switches, wheel scrolls panes | Everything reachable by keyboard first. |
+| Mouse | Optional, additive, on every screen: a click selects the row under it and twice opens it, click tab switches, click a pane focuses it, the top row of a subscreen goes back, wheel scrolls the pane under it. Prompts and typed lines ignore it | Everything reachable by keyboard first. |
 | License | MIT | |
 
 Crates (pin latest stable at implementation time). This list is the dependency ceiling; adding a crate takes a record first (ADR-005): `ratatui`, `crossterm`, `tokio`, `reqwest` (rustls, json), `serde`, `serde_json`, `toml`, `clap`, `directories`, `thiserror`, `anyhow`, `tracing` + `tracing-subscriber` (file log only, never stdout), `unicode-width`, `open`, `strsim` (did-you-mean), `async-trait` (object-safe `Forge`), `insta` (snapshots, dev), `wiremock` (forge tests, dev).

@@ -198,7 +198,9 @@ impl App {
             status: self.status(w),
             cmd: self.cmd_line(w),
         };
-        Some(pipeline_screen(&screen, &ctx))
+        let (lines, hits) = pipeline_screen(&screen, &ctx);
+        self.set_hits(0, hits);
+        Some(lines)
     }
 
     /// The status line's position: the job among the jobs, or the log row

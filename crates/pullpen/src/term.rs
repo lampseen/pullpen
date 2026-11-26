@@ -49,6 +49,14 @@ impl Term {
             execute!(stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
         }
         execute!(stdout(), EnableFocusChange, EnableMouseCapture)?;
+        // ratatui's panic hook leaves raw mode and the alternate screen and
+        // nothing else: a shell left with mouse reporting on prints an
+        // escape sequence for every move of the pointer.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            Term { kitty, title: String::new() }.modes_off();
+            hook(info);
+        }));
         // Save the window title on the terminal's own stack (XTWINOPS 22),
         // so leaving can put back whatever the shell had; a terminal without
         // the stack ignores it, and the shell's next prompt retitles anyway.
@@ -59,11 +67,17 @@ impl Term {
     /// Best effort: the terminal may already be gone, and an error here
     /// would only hide the one the caller is about to return.
     fn leave(&self) {
+        self.modes_off();
+        ratatui::restore();
+    }
+
+    /// Turns off what `enter` turned on beyond ratatui's own setup. Best
+    /// effort, for the reason `leave` gives.
+    fn modes_off(&self) {
         let _ = execute!(stdout(), DisableFocusChange, DisableMouseCapture, Print("\x1b[23;0t"));
         if self.kitty {
             let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
         }
-        ratatui::restore();
     }
 }
 
@@ -151,7 +165,7 @@ fn event_loop(terminal: &mut DefaultTerminal, term: &mut Term, l: &mut Loop) -> 
                         _ => None,
                     };
                     if let Some(ev) = ev {
-                        l.app.mouse(ev, Instant::now());
+                        effects.extend(l.app.mouse(ev, Instant::now()));
                     }
                 }
                 // A resize needs nothing beyond the redraw at the top of the
